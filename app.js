@@ -2,7 +2,7 @@
    1. CONFIGURATION & APP STATE
    ========================================== */
 var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
-var SB_KEY = 'sb_publishable_H57950cizG2oEs2q6O2_fQ_gv7v8DgB';
+var SB_KEY = 'sb_publishable_H57950cizG2oEs2q602_FQ_gv7v8DgB';
 var tab = 'home';
 var SHOPS = ['Main Shop', 'Market Shop'];
 var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
@@ -91,6 +91,15 @@ function pOpts() { return S.prices.map(function(p) { return '<option value="' + 
 function shopOpts() { return SHOPS.map(function(s) { return '<option>' + s + '</option>'; }).join(''); }
 function noPrices() { return '<div class="c">Add your farms and prices first in the <b>Prices</b> tab.</div>'; }
 
+function formatPhone(p) {
+  if (!p) return '';
+  var clean = p.replace(/\D/g, '');
+  if (clean.charAt(0) === '0') {
+    clean = '233' + clean.slice(1);
+  }
+  return clean;
+}
+
 function debts() {
   var m = {};
   S.sales.slice().sort(function(a, b) { return a.date < b.date ? -1 : 1; }).forEach(function(s) {
@@ -155,32 +164,27 @@ var V = {
         st = stock(),
         h = '';
 
-    /* Row 1: Sales & Cash Tiles */
     h += '<div class="dash-grid">';
     h += '<div class="dash-tile"><span>Sales This Week</span><b>' + gh(rev) + '</b></div>';
     h += '<div class="dash-tile"><span>Cash Received</span><b>' + gh(cash) + '</b></div>';
     h += '</div>';
 
-    /* Row 2: Profit Highlight Tile */
     h += '<div class="dash-tile highlight" style="margin-bottom:12px;">';
     h += '<span>Net Cash Profit This Week</span>';
     h += '<b style="font-size:28px;">' + gh(pf) + '</b>';
     h += '<small style="display:block;margin-top:4px;opacity:0.85;">Cash received − farm purchases − transport</small>';
     h += '</div>';
 
-    /* Row 3: Purchases & Transport */
     h += '<div class="dash-grid">';
     h += '<div class="dash-tile"><span>Farm Purchases</span><b>' + gh(buy) + '</b></div>';
     h += '<div class="dash-tile"><span>Transport Cost</span><b>' + gh(tr) + '</b></div>';
     h += '</div>';
 
-    /* Row 4: Liabilities & Debts */
     h += '<div class="dash-grid">';
     h += '<div class="dash-tile"><span>Customers Owe You</span><b class="' + (od ? 'n' : '') + '">' + gh(owed) + '</b>' + (od ? '<small class="n" style="display:block;margin-top:2px;">' + od + ' overdue</small>' : '') + '</div>';
     h += '<div class="dash-tile"><span>You Owe Farmers</span><b>' + gh(fo) + '</b></div>';
     h += '</div>';
 
-    /* Row 5: Live Shop Stock Tiles */
     SHOPS.forEach(function(s) {
       var rows = Object.keys(st.m).filter(function(k) { return k.split('|')[0] == s; }).map(function(k) {
         var q = st.m[k], pid = k.split('|')[1];
@@ -189,7 +193,6 @@ var V = {
       h += '<div class="c"><h2>📦 ' + s + ' Stock</h2>' + (rows || '<small style="color:var(--mu)">No stock recorded yet.</small>') + '</div>';
     });
 
-    /* Row 6: Quick Data & System Controls */
     h += '<div class="c"><h3>System & Data</h3><div class="r"><button onclick="backup()">Download Backup</button><button onclick="logout()" style="background:var(--bd);color:var(--tx)">Sign Out</button></div></div>';
 
     return h;
@@ -203,16 +206,31 @@ var V = {
   sell: function() {
     if (!S.prices.length) return noPrices();
     var cl = S.customers.map(function(c) { return '<option value="' + esc(c.name) + '">' + (c.phone ? '(' + esc(c.phone) + ')' : '') + '</option>'; }).join('');
-    return '<div class="c"><h2>New sale</h2><datalist id="cl">' + cl + '</datalist><div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label><label>Shop<select id="s-s">' + shopOpts() + '</select></label></div><label>Farm · egg size<select id="s-p" onchange="sp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="s-q" type="number" inputmode="decimal" oninput="sp(1)"></label><label>Price / crate<input id="s-pr" type="number" inputmode="decimal" oninput="this.dataset.t=1;sp(1)"></label></div><label>Customer (blank = walk-in)<input id="s-c" list="cl" placeholder="Type or select customer"></label><label>Payment<select id="s-m" onchange="sp(1)"><option value="f">Paid in full</option><option value="p">Part paid</option><option value="c">On credit</option></select></label><div id="s-pt" hidden><label>Amount paid now<input id="s-a" type="number" inputmode="decimal"></label></div><div id="s-du" hidden><label>Must pay back within<select id="s-dd"><option value="7">1 week</option><option value="14">2 weeks</option><option value="21">3 weeks</option><option value="30">1 month</option></select></label></div><div id="s-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addSale()">Save sale</button></div><div class="c"><h3>Recent sales</h3>' + recent(S.sales, 'sales', function(s) { return esc(s.lbl) + ' · ' + s.qty + ' × ' + gh(s.price) + '<small>' + s.date + ' · ' + s.shop + ' · ' + esc(s.cust || 'Walk-in') + (s.paid < s.qty * s.price - .005 ? ' · owes ' + gh(s.qty * s.price - s.paid) : '') + '</small>'; }) + '</div>';
+    return '<div class="c"><h2>New sale</h2><datalist id="cl">' + cl + '</datalist><div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label><label>Shop<select id="s-s">' + shopOpts() + '</select></label></div><label>Farm · egg size<select id="s-p" onchange="sp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="s-q" type="number" inputmode="decimal" oninput="sp(1)"></label><label>Price / crate<input id="s-pr" type="number" inputmode="decimal" oninput="this.dataset.t=1;sp(1)"></label></div><label>Customer (blank = walk-in)<input id="s-c" list="cl" placeholder="Type or select customer"></label><label>Payment<select id="s-m" onchange="sp(1)"><option value="f">Paid in full</option><option value="p">Part paid</option><option value="c">On credit</option></select></label><div id="s-pt" hidden><label>Amount paid now<input id="s-a" type="number" inputmode="decimal"></label></div><div id="s-du" hidden><label>Must pay back within<select id="s-dd"><option value="7">1 week</option><option value="14">2 weeks</option><option value="21">3 weeks</option><option value="30">1 month</option></select></label></div><div id="s-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addSale()">Save sale</button></div>' +
+    '<div class="c"><h3>Recent Sales & Receipts</h3>' +
+    S.sales.slice(-5).reverse().map(function(s) {
+      var custObj = S.customers.find(function(c) { return c.name.toLowerCase() === (s.cust || '').toLowerCase(); });
+      var phone = custObj ? custObj.phone : '';
+      var total = s.qty * s.price;
+      var dueAmt = total - s.paid;
+      var msg = encodeURIComponent('*AFA FRESH EGGS - RECEIPT*\nDate: ' + s.date + '\nItem: ' + s.lbl + '\nQty: ' + s.qty + ' crates\nPrice/Crate: ' + gh(s.price) + '\nTotal: ' + gh(total) + '\nPaid: ' + gh(s.paid) + (dueAmt > 0 ? '\nBalance Due: ' + gh(dueAmt) + '\nDue Date: ' + (s.due || 'N/A') : '\nStatus: PAID IN FULL') + '\n\nThank you for your patronage!');
+      var waBtn = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + msg + '" target="_blank">💬 Send Receipt</a>' : '';
+      return '<div class="l"><div><b>' + esc(s.lbl) + '</b> · ' + s.qty + ' × ' + gh(s.price) + '<small>' + s.date + ' · ' + esc(s.cust || 'Walk-in') + (dueAmt > 0 ? ' · owes ' + gh(dueAmt) : '') + '</small>' + waBtn + '</div><button class="s" aria-label="Delete" onclick="del(\'sales\',\'' + s.id + '\')">×</button></div>';
+    }).join('') + '</div>';
   },
 
   credit: function() {
-    var d = debts(), h = '<div class="c"><h2>Who owes you</h2>';
+    var d = debts(), h = '<div class="c"><h2>Who owes you (WhatsApp Reminders)</h2>';
     h += d.map(function(x, i) {
       var o = x.due < td();
       var custObj = S.customers.find(function(c){ return c.name.toLowerCase() === x.n.toLowerCase(); });
-      var phoneHtml = custObj && custObj.phone ? '<br><a href="tel:'+esc(custObj.phone)+'" style="color:var(--g);text-decoration:none">📞 '+esc(custObj.phone)+'</a>' : '';
-      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>'+esc(x.n)+'</b>'+phoneHtml+'<small>Due '+x.due+'</small></div><div style="text-align:right"><b>'+gh(x.bal)+'</b><br><span class="t'+(o?'':' o')+'">'+(o?'Overdue':'On time')+'</span></div></div><div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa'+i+'" type="number" inputmode="decimal" placeholder="Amount paid" style="margin:0"><button onclick="pay('+i+')" style="width:auto">Record</button></div></div>';
+      var phone = custObj ? custObj.phone : '';
+      var phoneHtml = phone ? '<br><a href="tel:'+esc(phone)+'" style="color:var(--g);text-decoration:none">📞 '+esc(phone)+'</a>' : '';
+      
+      var waMsg = encodeURIComponent('Hello ' + x.n + ', this is a friendly reminder from AFA Fresh Eggs regarding your outstanding balance of ' + gh(x.bal) + ', due by ' + x.due + '. Thank you!');
+      var waLink = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + waMsg + '" target="_blank">💬 WhatsApp Reminder</a>' : '<small style="color:var(--rd)">No phone number saved</small>';
+
+      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>'+esc(x.n)+'</b>'+phoneHtml+'<small>Due '+x.due+'</small></div><div style="text-align:right"><b>'+gh(x.bal)+'</b><br><span class="t'+(o?'':' o')+'">'+(o?'Overdue':'On time')+'</span></div></div>' + waLink + '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa'+i+'" type="number" inputmode="decimal" placeholder="Amount paid" style="margin:0"><button onclick="pay('+i+')" style="width:auto">Record Payment</button></div></div>';
     }).join('') || '<small style="color:var(--mu)">Nobody owes you. Credit sales appear here.</small>';
     return h + '</div><div class="c"><h3>Recent payments</h3>' + recent(S.pay, 'pay', function(p) { return esc(p.cust) + ' paid ' + gh(p.amt) + '<small>' + p.date + '</small>'; }) + '</div>';
   },
