@@ -55,7 +55,26 @@
     }
 
     /* ==========================================
-       2. GLOBAL RESETS & TYPOGRAPHY
+       2. ANIMATIONS & KEYFRAME EFFECTS
+       ========================================== */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes slideUp {
+      from { opacity: 0; transform: translate(-50%, 15px); }
+      to { opacity: 1; transform: translate(-50%, 0); }
+    }
+
+    @keyframes pulseGlow {
+      0% { box-shadow: 0 0 0 0 rgba(31, 94, 59, 0.4); }
+      70% { box-shadow: 0 0 0 8px rgba(31, 94, 59, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(31, 94, 59, 0); }
+    }
+
+    /* ==========================================
+       3. GLOBAL RESETS & TYPOGRAPHY
        ========================================== */
     * { box-sizing: border-box; }
     html { scroll-padding-top: env(safe-area-inset-top, 0px); }
@@ -71,7 +90,7 @@
     [hidden] { display: none !important; }
 
     /* ==========================================
-       3. COMPONENT STYLES
+       4. COMPONENT STYLES & TRANSITIONS
        ========================================== */
     header {
       display: flex;
@@ -80,13 +99,19 @@
       padding: 14px 16px;
       background: var(--g);
       color: var(--on);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     header b { font: 700 18px Georgia, serif; letter-spacing: 1px; }
     header small { display: block; opacity: .85; font-size: 12px; }
 
-    main { max-width: 640px; margin: 0 auto; padding: 12px; }
+    main {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 12px;
+      animation: fadeIn 0.35s ease-out;
+    }
 
-    /* Card Containers */
+    /* Card Containers with Hover Effect */
     .c {
       background: var(--cd);
       border: 1px solid var(--bd);
@@ -94,6 +119,10 @@
       padding: 16px;
       margin-bottom: 12px;
       box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .c:hover {
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
     }
 
     h2 { font-size: 18px; margin: 0 0 12px; font-weight: 600; }
@@ -101,7 +130,6 @@
     
     label { display: block; font-size: 14px; color: var(--mu); margin-bottom: 10px; }
     
-    /* Inputs optimized for touch & preventing mobile auto-zoom */
     input, select {
       width: 100%;
       font: inherit;
@@ -112,6 +140,12 @@
       border-radius: 10px;
       background: var(--bg);
       color: var(--tx);
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: var(--g);
+      box-shadow: 0 0 0 3px rgba(31,94,59,0.15);
     }
 
     .r { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -127,12 +161,16 @@
       width: 100%;
       cursor: pointer;
       min-height: 46px;
+      transition: background-color 0.2s ease, transform 0.1s ease;
     }
+    button:active { transform: scale(0.98); }
     button.s { background: none; color: var(--rd); width: auto; padding: 4px 10px; font-size: 18px; min-height: auto; }
+    button.s:hover { opacity: 0.8; }
 
     /* KPI Grid Cards */
     .k { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
-    .k div { background: var(--cd); border: 1px solid var(--bd); border-radius: 14px; padding: 14px; }
+    .k div { background: var(--cd); border: 1px solid var(--bd); border-radius: 14px; padding: 14px; transition: transform 0.2s ease; }
+    .k div:hover { transform: translateY(-2px); }
     .k span { font-size: 12px; color: var(--mu); display: block; margin-bottom: 2px; }
     .k b { font-size: 20px; }
 
@@ -148,12 +186,13 @@
       padding: 10px 0;
       border-top: 1px solid var(--bd);
       font-size: 14px;
+      animation: fadeIn 0.3s ease-out;
     }
     .l:first-of-type { border-top: 0; }
     .l small { color: var(--mu); display: block; margin-top: 2px; }
 
     /* Status Badges */
-    .t { display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 99px; background: var(--rb); color: var(--rd); }
+    .t { display: inline-block; font-size: 11px; padding: 3px 9px; border-radius: 99px; background: var(--rb); color: var(--rd); font-weight: 600; }
     .t.o { background: var(--gb); color: var(--g); }
 
     .pr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -168,7 +207,7 @@
       background: var(--cd);
       border-top: 1px solid var(--bd);
       padding-bottom: env(safe-area-inset-bottom, 0px);
-      box-shadow: 0 -4px 12px rgba(0,0,0,0.04);
+      box-shadow: 0 -4px 16px rgba(0,0,0,0.06);
       z-index: 10;
     }
     nav button {
@@ -180,11 +219,13 @@
       font-weight: 500;
       flex: 1;
       min-height: auto;
+      transition: color 0.2s ease;
     }
-    nav button i { display: block; font-style: normal; font-size: 22px; line-height: 1.1; }
+    nav button i { display: block; font-style: normal; font-size: 22px; line-height: 1.1; transition: transform 0.2s ease; }
     nav button.a { color: var(--g); font-weight: 700; }
+    nav button.a i { transform: scale(1.15); }
 
-    /* Toast Notification */
+    /* Animated Toast Notification */
     #toast {
       position: fixed;
       left: 50%;
@@ -192,15 +233,16 @@
       bottom: calc(78px + env(safe-area-inset-bottom, 0px));
       background: var(--tx);
       color: var(--bg);
-      padding: 10px 18px;
+      padding: 10px 20px;
       border-radius: 99px;
       font-size: 14px;
       z-index: 99;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+      animation: slideUp 0.25s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
 
     /* ==========================================
-       4. MOBILE RESPONSIVE MEDIA QUERY (< 520px)
+       5. MOBILE RESPONSIVE MEDIA QUERY (< 520px)
        ========================================== */
     @media (max-width: 520px) {
       .r, .k {
@@ -243,10 +285,10 @@
 
   <script>
     /* ==========================================
-       5. CONFIGURATION & APP STATE
+       6. CONFIGURATION & APP STATE
        ========================================== */
     var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co', 
-        SB_KEY = 'sb_publishable_...'; // Paste your actual key here
+        SB_KEY = 'sb_publishable_...'; // Paste your actual key here[cite: 3]
     var tab = 'home';
     var SHOPS = ['Main Shop', 'Market Shop'];
     var S = { prices: [], col: [], sales: [], pay: [], costs: [] };
@@ -255,15 +297,28 @@
     var SB;
 
     /* ==========================================
-       6. DATABASE SYNC & STORAGE HANDLERS
+       7. ROBUST DATABASE SYNC & STORAGE HANDLERS
        ========================================== */
     async function load() {
       for (var k in TB) {
-        var r = await SB.from(TB[k]).select('*').order('created_at');
-        if (r.error) { toast('Could not load ' + k); continue; }
-        S[k] = r.data.map(function(x) { delete x.created_at; return x; });
-        snap[k] = {};
-        S[k].forEach(function(x) { snap[k][x.id] = JSON.stringify(x); });
+        try {
+          var r = await SB.from(TB[k]).select('*').order('created_at', { ascending: true });
+          if (r.error) {
+            // Fallback query without sorting if created_at is missing
+            r = await SB.from(TB[k]).select('*');
+          }
+          if (r.error) throw r.error;
+          S[k] = (r.data || []).map(function(x) { 
+            var clean = Object.assign({}, x);
+            delete clean.created_at; 
+            return clean; 
+          });
+          snap[k] = {};
+          S[k].forEach(function(x) { snap[k][x.id] = JSON.stringify(x); });
+        } catch (err) {
+          console.error('Error loading table ' + k, err);
+          toast('Could not sync ' + k);
+        }
       }
     }
 
@@ -287,14 +342,15 @@
           snap[k] = {};
           S[k].forEach(function(x) { snap[k][x.id] = JSON.stringify(x); });
         } catch (e) {
-          toast('Not saved. Check your internet and try again');
+          console.error('Save error on ' + k, e);
+          toast('Not saved. Check your internet connection');
           return;
         }
       }
     }
 
     /* ==========================================
-       7. HELPER & UTILITY FUNCTIONS
+       8. HELPER & UTILITY FUNCTIONS
        ========================================== */
     var $ = function(s) { return document.querySelector(s); };
     var uid = function() { return Math.random().toString(36).slice(2, 9); };
@@ -316,7 +372,7 @@
       e.textContent = t;
       e.hidden = false;
       clearTimeout(toast.h);
-      toast.h = setTimeout(function() { e.hidden = true; }, 2500);
+      toast.h = setTimeout(function() { e.hidden = true; }, 3000);
     }
 
     function prod(id) { return S.prices.find(function(p) { return p.id == id; }); }
@@ -370,7 +426,7 @@
     }
 
     /* ==========================================
-       8. VIEW TEMPLATES (UI SCREENS)
+       9. VIEW TEMPLATES (UI SCREENS)
        ========================================== */
     var V = {
       home: function() {
@@ -440,7 +496,7 @@
     };
 
     /* ==========================================
-       9. INTERACTION & ACTION HANDLERS
+       10. INTERACTION & ACTION HANDLERS
        ========================================== */
     function cp(t) {
       var p = prod($('#c-p').value);
@@ -526,7 +582,7 @@
     }
 
     /* ==========================================
-       10. NAVIGATION & INITIALIZATION
+       11. NAVIGATION & INITIALIZATION
        ========================================== */
     var TABS = [['home', '⌂', 'Home'], ['collect', '↓', 'Collect'], ['sell', '$', 'Sell'], ['credit', '◔', 'Credit'], ['costs', '⛟', 'Costs'], ['prices', '≡', 'Prices']];
 
