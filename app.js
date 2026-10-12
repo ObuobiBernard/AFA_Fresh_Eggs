@@ -5,21 +5,19 @@ var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co',
     SB_KEY = 'sb_publishable_...'; // Paste your actual key here[cite: 3]
 var tab = 'home';
 var SHOPS = ['Main Shop', 'Market Shop'];
-var S = { prices: [], col: [], sales: [], pay: [], costs: [] };
+var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
 var snap = {};
-var TB = { prices: 'prices', col: 'collections', sales: 'sales', pay: 'payments', costs: 'costs' };
+var TB = { prices: 'prices', col: 'collections', sales: 'sales', pay: 'payments', costs: 'costs', customers: 'customers' };
 var SB;
 
 /* ==========================================
-   2. ROBUST DATABASE SYNC & STORAGE HANDLERS
+   2. DATABASE SYNC & STORAGE HANDLERS
    ========================================== */
 async function load() {
   for (var k in TB) {
     try {
       var r = await SB.from(TB[k]).select('*').order('created_at', { ascending: true });
-      if (r.error) {
-        r = await SB.from(TB[k]).select('*');
-      }
+      if (r.error) { r = await SB.from(TB[k]).select('*'); }
       if (r.error) throw r.error;
       S[k] = (r.data || []).map(function(x) { 
         var clean = Object.assign({}, x);
@@ -179,17 +177,28 @@ var V = {
 
   sell: function() {
     if (!S.prices.length) return noPrices();
-    var cl = debts().map(function(d) { return '<option value="' + esc(d.n) + '">'; }).join('');
-    return '<div class="c"><h2>New sale</h2><datalist id="cl">' + cl + '</datalist><div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label><label>Shop<select id="s-s">' + shopOpts() + '</select></label></div><label>Farm · egg size<select id="s-p" onchange="sp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="s-q" type="number" inputmode="decimal" oninput="sp(1)"></label><label>Price / crate<input id="s-pr" type="number" inputmode="decimal" oninput="this.dataset.t=1;sp(1)"></label></div><label>Customer (blank = walk-in)<input id="s-c" list="cl"></label><label>Payment<select id="s-m" onchange="sp(1)"><option value="f">Paid in full</option><option value="p">Part paid</option><option value="c">On credit</option></select></label><div id="s-pt" hidden><label>Amount paid now<input id="s-a" type="number" inputmode="decimal"></label></div><div id="s-du" hidden><label>Must pay back within<select id="s-dd"><option value="7">1 week</option><option value="14">2 weeks</option><option value="21">3 weeks</option><option value="30">1 month</option></select></label></div><div id="s-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addSale()">Save sale</button></div><div class="c"><h3>Recent sales</h3>' + recent(S.sales, 'sales', function(s) { return esc(s.lbl) + ' · ' + s.qty + ' × ' + gh(s.price) + '<small>' + s.date + ' · ' + s.shop + ' · ' + esc(s.cust || 'Walk-in') + (s.paid < s.qty * s.price - .005 ? ' · owes ' + gh(s.qty * s.price - s.paid) : '') + '</small>'; }) + '</div>';
+    var cl = S.customers.map(function(c) { return '<option value="' + esc(c.name) + '">' + (c.phone ? '(' + esc(c.phone) + ')' : '') + '</option>'; }).join('');
+    return '<div class="c"><h2>New sale</h2><datalist id="cl">' + cl + '</datalist><div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label><label>Shop<select id="s-s">' + shopOpts() + '</select></label></div><label>Farm · egg size<select id="s-p" onchange="sp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="s-q" type="number" inputmode="decimal" oninput="sp(1)"></label><label>Price / crate<input id="s-pr" type="number" inputmode="decimal" oninput="this.dataset.t=1;sp(1)"></label></div><label>Customer (blank = walk-in)<input id="s-c" list="cl" placeholder="Type or select customer"></label><label>Payment<select id="s-m" onchange="sp(1)"><option value="f">Paid in full</option><option value="p">Part paid</option><option value="c">On credit</option></select></label><div id="s-pt" hidden><label>Amount paid now<input id="s-a" type="number" inputmode="decimal"></label></div><div id="s-du" hidden><label>Must pay back within<select id="s-dd"><option value="7">1 week</option><option value="14">2 weeks</option><option value="21">3 weeks</option><option value="30">1 month</option></select></label></div><div id="s-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addSale()">Save sale</button></div><div class="c"><h3>Recent sales</h3>' + recent(S.sales, 'sales', function(s) { return esc(s.lbl) + ' · ' + s.qty + ' × ' + gh(s.price) + '<small>' + s.date + ' · ' + s.shop + ' · ' + esc(s.cust || 'Walk-in') + (s.paid < s.qty * s.price - .005 ? ' · owes ' + gh(s.qty * s.price - s.paid) : '') + '</small>'; }) + '</div>';
   },
 
   credit: function() {
     var d = debts(), h = '<div class="c"><h2>Who owes you</h2>';
     h += d.map(function(x, i) {
       var o = x.due < td();
-      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>' + esc(x.n) + '</b><small>Due ' + x.due + '</small></div><div style="text-align:right"><b>' + gh(x.bal) + '</b><br><span class="t' + (o ? '' : ' o') + '">' + (o ? 'Overdue' : 'On time') + '</span></div></div><div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa' + i + '" type="number" inputmode="decimal" placeholder="Amount paid" style="margin:0"><button onclick="pay(' + i + ')" style="width:auto">Record</button></div></div>';
+      var custObj = S.customers.find(function(c){ return c.name.toLowerCase() === x.n.toLowerCase(); });
+      var phoneHtml = custObj && custObj.phone ? '<br><a href="tel:'+esc(custObj.phone)+'" style="color:var(--g);text-decoration:none">📞 '+esc(custObj.phone)+'</a>' : '';
+      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>'+esc(x.n)+'</b>'+phoneHtml+'<small>Due '+x.due+'</small></div><div style="text-align:right"><b>'+gh(x.bal)+'</b><br><span class="t'+(o?'':' o')+'">'+(o?'Overdue':'On time')+'</span></div></div><div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa'+i+'" type="number" inputmode="decimal" placeholder="Amount paid" style="margin:0"><button onclick="pay('+i+')" style="width:auto">Record</button></div></div>';
     }).join('') || '<small style="color:var(--mu)">Nobody owes you. Credit sales appear here.</small>';
     return h + '</div><div class="c"><h3>Recent payments</h3>' + recent(S.pay, 'pay', function(p) { return esc(p.cust) + ' paid ' + gh(p.amt) + '<small>' + p.date + '</small>'; }) + '</div>';
+  },
+
+  customers: function() {
+    var h = '<div class="c"><h2>Add Credit Customer</h2><label>Customer Name<input id="cu-n" placeholder="e.g. John Doe"></label><label>Phone Number<input id="cu-p" type="tel" placeholder="e.g. 0241234567"></label><button onclick="addCustomer()">Save Customer</button></div>';
+    h += '<div class="c"><h2>Customer Directory</h2>';
+    h += S.customers.map(function(c) {
+      return '<div class="l"><div><b>'+esc(c.name)+'</b><small>📞 '+esc(c.phone || 'No phone')+'</small></div><div style="display:flex;gap:6px">' + (c.phone ? '<a class="btn-link" style="padding:6px 12px;font-size:13px;width:auto" href="tel:'+esc(c.phone)+'">Call</a>' : '') + '<button class="s" onclick="del(\'customers\',\''+c.id+'\')">×</button></div></div>';
+    }).join('') || '<small style="color:var(--mu)">No customers saved yet.</small>';
+    return h + '</div>';
   },
 
   costs: function() {
@@ -252,6 +261,15 @@ function addSale() {
   render();
 }
 
+function addCustomer() {
+  var name = $('#cu-n').value.trim(), phone = $('#cu-p').value.trim();
+  if (!name) return toast('Enter customer name');
+  S.customers.push({ id: uid(), name: name, phone: phone });
+  save();
+  toast('Customer saved');
+  render();
+}
+
 function pay(i) {
   var d = debts()[i], a = num('#pa' + i);
   if (!d || a <= 0) return toast('Enter the amount paid');
@@ -297,7 +315,7 @@ function delP(id) {
 /* ==========================================
    6. NAVIGATION & INITIALIZATION
    ========================================== */
-var TABS = [['home', '⌂', 'Home'], ['collect', '↓', 'Collect'], ['sell', '$', 'Sell'], ['credit', '◔', 'Credit'], ['costs', '⛟', 'Costs'], ['prices', '≡', 'Prices']];
+var TABS = [['home', '⌂', 'Home'], ['collect', '↓', 'Collect'], ['sell', '$', 'Sell'], ['credit', '◔', 'Credit'], ['customers', '👥', 'Customers'], ['costs', '⛟', 'Costs'], ['prices', '≡', 'Prices']];
 
 function go(t) {
   tab = t;
@@ -306,7 +324,7 @@ function go(t) {
 }
 
 function render() {
-  $('#nv').innerHTML = TABS.map(function(t) { return '<button class="' + (t[0] == tab ? 'a' : '') + '" onclick="go(\'' + t[0] + '\')"><i>' + t[1] + '</i>' + t[2] + '</button>'; }).join('');
+  $('#nv').innerHTML = TABS.map(function(t) { return '<button class="' + (t[0] == tab ? 'a' : '') + '" onclick="go(\'' + t[0] + \')"><i>' + t[1] + '</i>' + t[2] + '</button>'; }).join('');
   $('#m').innerHTML = V[tab]();
   $('#wk').textContent = 'Week of ' + wkStart();
   if (tab == 'collect') cp();
@@ -352,5 +370,4 @@ async function boot() {
   }
 }
 
-// Start application boot sequence
 boot();
