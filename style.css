@@ -89,7 +89,6 @@ main {
   padding: 12px;
 }
 
-/* Cards animate in every time a tab renders */
 .c {
   background: var(--cd);
   border: 1px solid var(--bd);
@@ -102,7 +101,9 @@ main {
 }
 .c:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
 
-/* Dashboard Tile Enhancements */
+/* ==========================================
+   3. DASHBOARD TILE GRID
+   ========================================== */
 .dash-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
@@ -189,6 +190,20 @@ button, .btn-link {
 }
 button:active, .btn-link:active { transform: scale(0.98); }
 button.s { background: none; color: var(--rd); width: auto; padding: 4px 10px; font-size: 18px; min-height: auto; }
+
+/* WhatsApp Custom Button Style */
+.btn-wa {
+  background: #25D366 !important;
+  color: #fff !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-decoration: none;
+}
+.btn-wa:hover {
+  background: #1ebe5d !important;
+}
 
 .p { color: var(--g); }
 .n { color: var(--rd); }
