@@ -1,8 +1,8 @@
 /* ==========================================
    1. CONFIGURATION & APP STATE
    ========================================== */
-var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co', 
-    SB_KEY = 'sb_publishable_H57950cizG2oEs2q6O2_fQ_gv7v8DgB'; // Paste your actual key here[cite: 3]
+var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
+var SB_KEY = 'sb_publishable_H57950cizG2oEs2q6O2_fQ_gv7v8DgB'; // Replace with your actual key
 var tab = 'home';
 var SHOPS = ['Main Shop', 'Market Shop'];
 var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
@@ -324,7 +324,7 @@ function go(t) {
 }
 
 function render() {
-  $('#nv').innerHTML = TABS.map(function(t) { return '<button class="' + (t[0] == tab ? 'a' : '') + '" onclick="go(\'' + t[0] + \')"><i>' + t[1] + '</i>' + t[2] + '</button>'; }).join('');
+  $('#nv').innerHTML = TABS.map(function(t) { return '<button class="' + (t[0] == tab ? 'a' : '') + '" onclick="go(\'' + t[0] + '\')"><i>' + t[1] + '</i>' + t[2] + '</button>'; }).join('');
   $('#m').innerHTML = V[tab]();
   $('#wk').textContent = 'Week of ' + wkStart();
   if (tab == 'collect') cp();
@@ -333,7 +333,7 @@ function render() {
 
 function backup() {
   var a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
+  a.href = URL.createObjectURL(newBlob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
   a.download = 'afa-backup-' + td() + '.json';
   a.click();
 }
