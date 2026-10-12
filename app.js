@@ -2,7 +2,7 @@
    1. CONFIGURATION & APP STATE
    ========================================== */
 var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
-var SB_KEY = 'sb_publishable_H57950cizG2oEs2q6O2_fQ_gv7v8DgB'; // Replace with your actual key
+var SB_KEY = 'sb_publishable_H57950cizG2oEs2q602_FQ_gv7v8DgB';
 var tab = 'home';
 var SHOPS = ['Main Shop', 'Market Shop'];
 var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
@@ -155,19 +155,44 @@ var V = {
         st = stock(),
         h = '';
 
-    h += '<div class="k"><div><span>Sales this week</span><b>' + gh(rev) + '</b></div><div><span>Cash received</span><b>' + gh(cash) + '</b></div><div><span>Farm purchases</span><b>' + gh(buy) + '</b></div><div><span>Transport</span><b>' + gh(tr) + '</b></div></div>';
-    h += '<div class="c"><h3>Cash profit this week</h3><b class="' + (pf < 0 ? 'n' : 'p') + '" style="font-size:26px">' + gh(pf) + '</b><small style="display:block;color:var(--mu)">Cash received − farm purchases − transport</small></div>';
-    h += '<div class="k"><div><span>Customers owe you</span><b class="' + (od ? 'n' : '') + '">' + gh(owed) + '</b>' + (od ? '<span class="n">' + od + ' overdue</span>' : '') + '</div><div><span>You owe farmers</span><b>' + gh(fo) + '</b></div></div>';
-    
+    /* Row 1: Sales & Cash Tiles */
+    h += '<div class="dash-grid">';
+    h += '<div class="dash-tile"><span>Sales This Week</span><b>' + gh(rev) + '</b></div>';
+    h += '<div class="dash-tile"><span>Cash Received</span><b>' + gh(cash) + '</b></div>';
+    h += '</div>';
+
+    /* Row 2: Profit Highlight Tile */
+    h += '<div class="dash-tile highlight" style="margin-bottom:12px;">';
+    h += '<span>Net Cash Profit This Week</span>';
+    h += '<b style="font-size:28px;">' + gh(pf) + '</b>';
+    h += '<small style="display:block;margin-top:4px;opacity:0.85;">Cash received − farm purchases − transport</small>';
+    h += '</div>';
+
+    /* Row 3: Purchases & Transport */
+    h += '<div class="dash-grid">';
+    h += '<div class="dash-tile"><span>Farm Purchases</span><b>' + gh(buy) + '</b></div>';
+    h += '<div class="dash-tile"><span>Transport Cost</span><b>' + gh(tr) + '</b></div>';
+    h += '</div>';
+
+    /* Row 4: Liabilities & Debts */
+    h += '<div class="dash-grid">';
+    h += '<div class="dash-tile"><span>Customers Owe You</span><b class="' + (od ? 'n' : '') + '">' + gh(owed) + '</b>' + (od ? '<small class="n" style="display:block;margin-top:2px;">' + od + ' overdue</small>' : '') + '</div>';
+    h += '<div class="dash-tile"><span>You Owe Farmers</span><b>' + gh(fo) + '</b></div>';
+    h += '</div>';
+
+    /* Row 5: Live Shop Stock Tiles */
     SHOPS.forEach(function(s) {
       var rows = Object.keys(st.m).filter(function(k) { return k.split('|')[0] == s; }).map(function(k) {
         var q = st.m[k], pid = k.split('|')[1];
         return '<div class="l"><span>' + esc(st.L[pid]) + '</span><b class="' + (q <= 0 ? 'n' : '') + '">' + q + ' crates</b></div>';
       }).join('');
-      h += '<div class="c"><h2>' + s + ' stock</h2>' + (rows || '<small style="color:var(--mu)">No stock yet. Log a collection.</small>') + '</div>';
+      h += '<div class="c"><h2>📦 ' + s + ' Stock</h2>' + (rows || '<small style="color:var(--mu)">No stock recorded yet.</small>') + '</div>';
     });
 
-    return h + '<div class="c"><h3>Data</h3><div class="r"><button onclick="backup()">Download backup</button><button onclick="logout()" style="background:var(--bd);color:var(--tx)">Sign out</button></div></div>';
+    /* Row 6: Quick Data & System Controls */
+    h += '<div class="c"><h3>System & Data</h3><div class="r"><button onclick="backup()">Download Backup</button><button onclick="logout()" style="background:var(--bd);color:var(--tx)">Sign Out</button></div></div>';
+
+    return h;
   },
 
   collect: function() {
@@ -205,7 +230,7 @@ var V = {
     var w = wkStart(),
         tr = sum(S.costs.filter(function(c) { return c.date >= w; }), function(c) { return c.amt; }),
         cr = sum(S.col.filter(function(c) { return c.date >= w; }), function(c) { return c.qty; });
-    return '<div class="k"><div><span>Transport this week</span><b>' + gh(tr) + '</b></div><div><span>Per crate collected</span><b>' + (cr ? gh(tr / cr) : '–') + '</b></div></div><div class="c"><h2>Add transport / expense</h2><div class="r"><label>Date<input type="date" id="x-d" value="' + td() + '"></label><label>Amount<input id="x-a" type="number" inputmode="decimal"></label></div><label>What for<input id="x-n" placeholder="e.g. Fuel to Farm A"></label><button onclick="addCost()">Save expense</button></div><div class="c"><h3>Recent expenses</h3>' + recent(S.costs, 'costs', function(c) { return esc(c.descr) + ' · ' + gh(c.amt) + '<small>' + c.date + '</small>'; }) + '</div>';
+    return '<div class="dash-grid"><div class="dash-tile"><span>Transport this week</span><b>' + gh(tr) + '</b></div><div class="dash-tile"><span>Per crate collected</span><b>' + (cr ? gh(tr / cr) : '–') + '</b></div></div><div class="c"><h2>Add transport / expense</h2><div class="r"><label>Date<input type="date" id="x-d" value="' + td() + '"></label><label>Amount<input id="x-a" type="number" inputmode="decimal"></label></div><label>What for<input id="x-n" placeholder="e.g. Fuel to Farm A"></label><button onclick="addCost()">Save expense</button></div><div class="c"><h3>Recent expenses</h3>' + recent(S.costs, 'costs', function(c) { return esc(c.descr) + ' · ' + gh(c.amt) + '<small>' + c.date + '</small>'; }) + '</div>';
   },
 
   prices: function() {
@@ -333,7 +358,7 @@ function render() {
 
 function backup() {
   var a = document.createElement('a');
-  a.href = URL.createObjectURL(newBlob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
   a.download = 'afa-backup-' + td() + '.json';
   a.click();
 }
