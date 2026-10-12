@@ -2,7 +2,7 @@
    1. CONFIGURATION & APP STATE
    ========================================== */
 var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co', 
-    SB_KEY = 'sb_publishable_...'; // Paste your actual key here[cite: 3]
+    SB_KEY = 'sb_publishable_H57950cizG2oEs2q6O2_fQ_gv7v8DgB'; // Paste your actual key here[cite: 3]
 var tab = 'home';
 var SHOPS = ['Main Shop', 'Market Shop'];
 var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
