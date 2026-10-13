@@ -1,755 +1,437 @@
-/* AFA Fresh Eggs Manager
-   1 Config · 2 Helpers · 3 Data sync · 4 Views · 5 Actions · 6 Start-up */
-'use strict';
-(function () {
+/* ==========================================
+   1. CONFIGURATION & APP STATE
+   ========================================== */
+var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
+var SB_KEY = 'sb_publishable_H57950cizG2oEs2q602_FQ_gv7v8DgB';
+var tab = 'home';
+var SHOPS = ['Main Shop', 'Market Shop'];
+var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
+var snap = {};
+var TB = { prices: 'prices', col: 'collections', sales: 'sales', pay: 'payments', costs: 'costs', customers: 'customers' };
+var SB;
+var isSaving = false;
+var saveQueued = false;
 
 /* ==========================================
-   1. CONFIG & STATE
+   2. DATABASE SYNC & QUEUE HANDLERS
    ========================================== */
-// The publishable key is designed to be public. Your data is protected by
-// Row Level Security in Supabase, not by hiding this key.
-// If you change SB_URL, update connect-src in the CSP tag in index.html too.
-const SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
-const SB_KEY = 'sb_publishable_H57950cizG2oEs2q6O2_fQ_gv7v8DgB';
-
-const SHOPS = ['Main Shop', 'Market Shop'];
-const TB = { prices: 'prices', col: 'collections', sales: 'sales', pay: 'payments', costs: 'costs', customers: 'customers' };
-const NUMS = { prices: ['buy', 'sell'], col: ['qty', 'buy'], sales: ['qty', 'price', 'paid'], pay: ['amt'], costs: ['amt'], customers: [] };
-const TABS = [['home', 'Home'], ['collect', 'Collect'], ['sell', 'Sell'], ['credit', 'Credit'], ['costs', 'Costs'], ['prices', 'Prices']];
-const ICONS = {
-  home: '<path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/>',
-  collect: '<path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M4 20h16"/>',
-  sell: '<circle cx="12" cy="12" r="9"/><path d="M14.5 9.5c-.5-1-1.4-1.5-2.5-1.5-1.5 0-2.5.8-2.5 2s1 1.7 2.5 2 2.5.8 2.5 2-1 2-2.5 2c-1.1 0-2-.5-2.5-1.5"/><path d="M12 6v2M12 16v2"/>',
-  credit: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>',
-  costs: '<path d="M3 6h11v10H3z"/><path d="M14 10h4l3 3v3h-7"/><circle cx="7" cy="17.5" r="1.8"/><circle cx="17" cy="17.5" r="1.8"/>',
-  prices: '<path d="M3 12V4h8l10 10-8 8z"/><circle cx="7.5" cy="8.5" r="1.2"/>'
-};
-const PAGE = 5, MORE = 10;
-
-const S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
-let snap = {};            // what the server last confirmed, per table and id
-let SB = null;            // Supabase client
-let tab = 'home';
-let signedIn = false;
-let typing = false;       // true while a form has unsaved input
-let lastLoad = 0;
-let loadErr = [];         // tables that failed to load
-let syncState = 'ok';
-let running = null;       // the save currently in flight
-let again = false;        // another save was requested while one was running
-const shown = {};         // how many rows each "recent" list shows
-const last = { pid: '', shop: SHOPS[0] }; // remembers the last farm and shop picked
-
-/* ==========================================
-   2. HELPERS
-   ========================================== */
-const $ = (s, r) => (r || document).querySelector(s);
-const toNum = v => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
-const round2 = n => Math.round(n * 100) / 100;
-const sum = (a, f) => a.reduce((t, x) => t + f(x), 0);
-const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
-const nkey = s => String(s || '').trim().toLowerCase();
-const uid = () => { const a = new Uint8Array(10); crypto.getRandomValues(a); return Array.from(a, b => (b % 36).toString(36)).join(''); };
-
-// Dates are kept as local YYYY-MM-DD strings.
-const pad = n => String(n).padStart(2, '0');
-const ymd = d => d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
-const td = () => ymd(new Date());
-const addDays = (iso, n) => { const p = iso.split('-').map(Number); return ymd(new Date(p[0], p[1] - 1, p[2] + n)); };
-const wkStart = () => { const x = new Date(); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return ymd(x); };
-const dmy = iso => {
-  if (!iso) return '';
-  const p = iso.split('-').map(Number), o = { day: 'numeric', month: 'short' };
-  if (p[0] !== new Date().getFullYear()) o.year = 'numeric';
-  return new Date(p[0], p[1] - 1, p[2]).toLocaleDateString('en-GB', o);
-};
-
-const gh = n => {
-  const r = Math.abs(round2(n));
-  return (n < -0.004 ? '−' : '') + 'GH₵ ' + r.toLocaleString('en-GH', { minimumFractionDigits: r % 1 ? 2 : 0, maximumFractionDigits: 2 });
-};
-
-// Safe templating: every ${value} is HTML-escaped unless it came from html``.
-class Safe { constructor(s) { this.s = s; } toString() { return this.s; } }
-const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const ins = v => v instanceof Safe ? v.s : Array.isArray(v) ? v.map(ins).join('') : (v === false || v == null) ? '' : esc(v);
-const html = (strs, ...vals) => new Safe(strs.reduce((o, s, i) => o + s + (i < vals.length ? ins(vals[i]) : ''), ''));
-
-// Phones: digits only for WhatsApp (Ghana: 024... becomes 233 24...), cleaned for tel: links.
-function waNumber(p) {
-  let d = String(p || '').replace(/\D/g, '');
-  if (d.indexOf('00') === 0) d = d.slice(2);
-  else if (d.charAt(0) === '0') d = '233' + d.slice(1);
-  else if (d.length === 9) d = '233' + d;
-  return d.length >= 11 && d.length <= 15 ? d : '';
-}
-const telHref = p => String(p || '').replace(/[^\d+]/g, '');
-
-const prod = id => S.prices.find(p => p.id == id);
-const phoneOf = name => { const c = S.customers.find(x => nkey(x.name) === nkey(name)); return c && c.phone ? c.phone : ''; };
-const pickShop = s => (SHOPS.indexOf(s) >= 0 ? s : SHOPS[0]);
-const farmOpts = sel => S.prices.map(p => html`<option value="${p.id}" ${p.id == sel ? 'selected' : ''}>${p.farm} · ${p.item}</option>`);
-const shopOpts = sel => SHOPS.map(s => html`<option ${s === sel ? 'selected' : ''}>${s}</option>`);
-const empty = msg => html`<p class="empty">${msg}</p>`;
-const noPrices = () => html`<div class="card"><h2>Add a farm price first</h2><p class="empty">Collections and sales need a farm and egg size.</p><button class="btn" type="button" data-go="prices">Go to Prices</button></div>`;
-
-/* ---- business logic ---- */
-function debts() {
-  const m = Object.create(null);
-  S.sales.slice().sort((a, b) => cmp(a.date, b.date)).forEach(s => {
-    const o = s.qty * s.price - s.paid, name = (s.cust || '').trim();
-    if (o > .005 && name) {
-      const k = nkey(name), c = m[k] || (m[k] = { k: k, n: name, l: [], p: 0 });
-      c.l.push({ o: o, due: s.due || s.date });
+async function load() {
+  setSyncStatus('saving', 'Loading...');
+  for (var k in TB) {
+    try {
+      var r = await SB.from(TB[k]).select('*');
+      if (r.error) throw r.error;
+      S[k] = (r.data || []).map(function(x) { 
+        var clean = Object.assign({}, x);
+        delete clean.created_at; 
+        return clean; 
+      });
+      snap[k] = {};
+      S[k].forEach(function(x) { snap[k][x.id] = JSON.stringify(x); });
+    } catch (err) {
+      console.error('Error loading table ' + k, err);
+      setSyncStatus('offline', 'Offline Mode');
+      toast('Operating offline');
     }
+  }
+  if (navigator.onLine) setSyncStatus('synced', 'Synced');
+}
+
+async function save() {
+  if (isSaving) {
+    saveQueued = true;
+    return;
+  }
+  isSaving = true;
+  setSyncStatus('saving', 'Saving...');
+
+  for (var k in TB) {
+    var old = snap[k] || {}, ids = {}, up = [];
+    S[k].forEach(function(x) {
+      ids[x.id] = 1;
+      if (old[x.id] !== JSON.stringify(x)) up.push(x);
+    });
+    var del = Object.keys(old).filter(function(i) { return !ids[i]; });
+    try {
+      if (up.length) {
+        var r = await SB.from(TB[k]).upsert(up);
+        if (r.error) throw r.error;
+      }
+      if (del.length) {
+        var r2 = await SB.from(TB[k]).delete().in('id', del);
+        if (r2.error) throw r2.error;
+      }
+      snap[k] = {};
+      S[k].forEach(function(x) { snap[k][x.id] = JSON.stringify(x); });
+    } catch (e) {
+      console.error('Save error on ' + k, e);
+      setSyncStatus('offline', 'Not Saved');
+      isSaving = false;
+      toast('Save failed. Queued for retry.');
+      return;
+    }
+  }
+
+  isSaving = false;
+  setSyncStatus('synced', 'Synced');
+  if (saveQueued) {
+    saveQueued = false;
+    save();
+  }
+}
+
+function setSyncStatus(st, txt) {
+  var pill = $('#sync-pill');
+  if (!pill) return;
+  pill.className = 'sync-pill ' + st;
+  pill.textContent = txt;
+}
+
+/* ==========================================
+   3. UTILITIES & HELPERS
+   ========================================== */
+var $ = function(s) { return document.querySelector(s); };
+var uid = function() { return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 9); };
+var td = function() { return new Date().toISOString().slice(0, 10); };
+var plus = function(d) { return new Date(Date.now() + d * 864e5).toISOString().slice(0, 10); };
+var gh = function(n) { return 'GH₵ ' + (Math.round(n * 100) / 100).toLocaleString(); };
+var esc = function(s) { return String(s == null ? '' : s).replace(/[&<>'"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+var sum = function(a, f) { return a.reduce(function(t, x) { return t + f(x); }, 0); };
+var num = function(id) { return parseFloat($(id).value) || 0; };
+
+function wkStart() {
+  var x = new Date();
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return x.toISOString().slice(0, 10);
+}
+
+function toast(t) {
+  var e = $('#toast');
+  if (!e) return;
+  e.textContent = t;
+  e.hidden = false;
+  clearTimeout(toast.h);
+  toast.h = setTimeout(function() { e.hidden = true; }, 3000);
+}
+
+function toggleTheme() {
+  var root = document.documentElement;
+  var current = root.getAttribute('data-theme');
+  var next = current === 'dark' ? 'light' : 'dark';
+  root.setAttribute('data-theme', next);
+  localStorage.setItem('afa_theme', next);
+}
+
+function prod(id) { return S.prices.find(function(p) { return p.id == id; }); }
+function pOpts() { return S.prices.map(function(p) { return '<option value="' + p.id + '">' + esc(p.farm) + ' · ' + esc(p.item) + '</option>'; }).join(''); }
+function shopOpts() { return SHOPS.map(function(s) { return '<option>' + s + '</option>'; }).join(''); }
+function noPrices() { return '<div class="c">Add your farms and prices first in the <b>Prices</b> tab.</div>'; }
+
+function formatPhone(p) {
+  if (!p) return '';
+  var clean = p.replace(/\D/g, '');
+  if (clean.startsWith('0')) clean = '233' + clean.slice(1);
+  return clean;
+}
+
+function debts() {
+  var m = {};
+  S.sales.forEach(function(s) {
+    if (!s.cust_id) return;
+    var o = s.qty * s.price - s.paid;
+    var c = m[s.cust_id] = m[s.cust_id] || { id: s.cust_id, l: [], p: 0 };
+    if (o > 0.005) c.l.push({ o: o, due: s.due || s.date });
   });
-  S.pay.forEach(p => {
-    const k = nkey(p.cust), c = m[k] || (m[k] = { k: k, n: p.cust, l: [], p: 0 });
+  S.pay.forEach(function(p) {
+    if (!p.cust_id) return;
+    var c = m[p.cust_id] = m[p.cust_id] || { id: p.cust_id, l: [], p: 0 };
     c.p += p.amt;
   });
-  return Object.keys(m).map(k => {
-    const c = m[k]; let p = c.p;
-    c.l.forEach(x => { const t = Math.min(x.o, p); x.o -= t; p -= t; });   // payments clear the oldest debt first
-    const open = c.l.filter(x => x.o > .005);
-    return { k: c.k, n: c.n, bal: sum(open, x => x.o), due: open.length ? open.map(x => x.due).sort()[0] : '' };
-  }).filter(c => c.bal > .005).sort((a, b) => cmp(a.due, b.due));
+  return Object.values(m).map(function(c) {
+    var p = c.p;
+    c.l.forEach(function(x) {
+      var t = Math.min(x.o, p);
+      x.o -= t;
+      p -= t;
+    });
+    var o = c.l.filter(function(x) { return x.o > 0.005; });
+    var custObj = S.customers.find(function(cu) { return cu.id === c.id; });
+    return { id: c.id, name: custObj ? custObj.name : 'Unknown', bal: sum(o, function(x) { return x.o; }), due: o.length ? o.map(function(x) { return x.due; }).sort()[0] : '' };
+  }).filter(function(c) { return c.bal > 0.005; });
 }
 
 function stock() {
-  const m = Object.create(null);
-  SHOPS.forEach(s => { m[s] = Object.create(null); });
-  const add = (r, sign) => {
-    const sh = m[r.shop] || (m[r.shop] = Object.create(null));
-    const e = sh[r.pid] || (sh[r.pid] = { lbl: r.lbl, qty: 0 });
-    e.qty += sign * r.qty; e.lbl = r.lbl;
-  };
-  S.col.forEach(c => add(c, 1));
-  S.sales.forEach(s => add(s, -1));
-  return m;
+  var m = {}, L = {};
+  S.col.forEach(function(c) { var k = c.shop + '|' + c.pid; m[k] = (m[k] || 0) + c.qty; L[c.pid] = c.lbl; });
+  S.sales.forEach(function(s) { var k = s.shop + '|' + s.pid; m[k] = (m[k] || 0) - s.qty; L[s.pid] = s.lbl; });
+  return { m: m, L: L };
 }
 
-function receipt(s) {
-  const total = s.qty * s.price, owed = total - s.paid;
-  return ['*AFA FRESH EGGS - RECEIPT*', 'Date: ' + dmy(s.date), 'Item: ' + s.lbl, 'Qty: ' + s.qty + ' crates',
-    'Price/crate: ' + gh(s.price), 'Total: ' + gh(total), 'Paid: ' + gh(s.paid)]
-    .concat(owed > .005 ? ['Balance due: ' + gh(owed), 'Due date: ' + (s.due ? dmy(s.due) : 'N/A')] : ['Status: PAID IN FULL'])
-    .concat(['', 'Thank you for your patronage!']).join('\n');
-}
-
-const margin = p => 'Profit ' + gh(p.sell - p.buy) + ' per crate · margin ' + (p.sell ? Math.round((p.sell - p.buy) / p.sell * 100) : 0) + '%';
-
-/* ---- toast ---- */
-function hideToast() {
-  const t = $('#toast');
-  clearTimeout(toast.h);
-  t.classList.remove('in'); t.classList.add('out');
-  toast.h2 = setTimeout(() => { t.hidden = true; t.classList.remove('out'); }, 180);
-}
-function toast(msg, o) {
-  o = o || {};
-  const t = $('#toast');
-  clearTimeout(toast.h); clearTimeout(toast.h2);
-  t.textContent = '';
-  const s = document.createElement('span');
-  s.textContent = msg;
-  t.appendChild(s);
-  if (o.undo) {
-    const b = document.createElement('button');
-    b.type = 'button'; b.textContent = 'Undo';
-    b.addEventListener('click', () => { hideToast(); o.undo(); render(); save(); });
-    t.appendChild(b);
-  }
-  t.className = o.type === 'err' ? 'err' : '';
-  t.hidden = false;
-  void t.offsetWidth;
-  t.classList.add('in');
-  toast.h = setTimeout(hideToast, o.undo || o.type === 'err' ? 6000 : 2800);
+function del(t, id) {
+  if (!confirm('Delete this entry?')) return;
+  S[t] = S[t].filter(function(x) { return x.id != id; });
+  save();
+  render();
+  toast('Deleted entry');
 }
 
 /* ==========================================
-   3. DATA SYNC
+   4. VIEW TEMPLATES
    ========================================== */
-const keyOf = x => JSON.stringify(x);
+var V = {
+  home: function() {
+    var w = wkStart(),
+        sa = S.sales.filter(function(s) { return s.date >= w; }),
+        rev = sum(sa, function(s) { return s.qty * s.price; }),
+        cash = sum(sa, function(s) { return s.paid; }) + sum(S.pay.filter(function(p) { return p.date >= w; }), function(p) { return p.amt; }),
+        buy = sum(S.col.filter(function(c) { return c.date >= w; }), function(c) { return c.qty * c.buy; }),
+        tr = sum(S.costs.filter(function(c) { return c.date >= w; }), function(c) { return c.amt; }),
+        pf = cash - buy - tr,
+        d = debts(),
+        owed = sum(d, function(x) { return x.bal; }),
+        fo = sum(S.col.filter(function(c) { return (c.paid_amt || 0) < (c.qty * c.buy); }), function(c) { return (c.qty * c.buy) - (c.paid_amt || 0); }),
+        st = stock(),
+        h = '';
 
-function norm(k, x) {
-  const o = Object.assign({}, x);
-  delete o.created_at;
-  NUMS[k].forEach(f => { o[f] = toNum(o[f]); });
-  if (k === 'col') o.paid = !!o.paid;
-  if (k === 'prices') o.hist = Array.isArray(o.hist) ? o.hist : [];
-  return o;
-}
+    h += '<div class="dash-grid">';
+    h += '<div class="dash-tile"><span>Sales This Week</span><b>' + gh(rev) + '</b></div>';
+    h += '<div class="dash-tile"><span>Cash Received</span><b>' + gh(cash) + '</b></div>';
+    h += '</div>';
 
-async function loadAll() {
-  loadErr = [];
-  await Promise.all(Object.keys(TB).map(async k => {
-    try {
-      let r = await SB.from(TB[k]).select('*').order('created_at', { ascending: true });
-      if (r.error) r = await SB.from(TB[k]).select('*');
-      if (r.error) throw r.error;
-      S[k] = (r.data || []).map(x => norm(k, x));
-      snap[k] = {};
-      S[k].forEach(x => { snap[k][x.id] = keyOf(x); });
-    } catch (e) {
-      console.error('Load failed: ' + TB[k], e);
-      loadErr.push(k);
-    }
-  }));
-  lastLoad = Date.now();
-}
+    h += '<div class="dash-tile highlight" style="margin-bottom:12px;">';
+    h += '<span>Net Cash Profit This Week</span>';
+    h += '<b style="font-size:28px;">' + gh(pf) + '</b>';
+    h += '<small style="display:block;margin-top:4px;opacity:0.85;">Cash received − farm purchases − transport</small>';
+    h += '</div>';
 
-function diff(k) {
-  const old = snap[k] || {}, seen = {}, up = [], keys = {};
-  S[k].forEach(x => { seen[x.id] = 1; const key = keyOf(x); if (old[x.id] !== key) { up.push(x); keys[x.id] = key; } });
-  return { up: up, keys: keys, del: Object.keys(old).filter(id => !seen[id]) };
-}
-const dirty = () => Object.keys(TB).some(k => { const d = diff(k); return d.up.length || d.del.length; });
+    h += '<div class="dash-grid">';
+    h += '<div class="dash-tile"><span>Farm Purchases</span><b>' + gh(buy) + '</b></div>';
+    h += '<div class="dash-tile"><span>Transport Cost</span><b>' + gh(tr) + '</b></div>';
+    h += '</div>';
 
-function setSync(s) {
-  syncState = s;
-  const b = $('#sync');
-  b.dataset.state = s;
-  b.querySelector('span').textContent = { ok: 'Synced', saving: 'Saving…', error: 'Not saved · tap to retry' }[s];
-}
+    h += '<div class="dash-grid">';
+    h += '<div class="dash-tile"><span>Customers Owe You</span><b>' + gh(owed) + '</b></div>';
+    h += '<div class="dash-tile"><span>You Owe Farmers</span><b>' + gh(fo) + '</b></div>';
+    h += '</div>';
 
-async function pushTable(k) {
-  const d = diff(k);
-  if (!d.up.length && !d.del.length) return true;
-  snap[k] = snap[k] || {};
-  try {
-    if (d.up.length) { const r = await SB.from(TB[k]).upsert(d.up); if (r.error) throw r.error; }
-    if (d.del.length) { const r2 = await SB.from(TB[k]).delete().in('id', d.del); if (r2.error) throw r2.error; }
-    d.up.forEach(x => { snap[k][x.id] = d.keys[x.id]; });   // only mark what was actually sent
-    d.del.forEach(id => { delete snap[k][id]; });
-    return true;
-  } catch (e) {
-    console.error('Save failed: ' + TB[k], e);
-    return false;
-  }
-}
+    SHOPS.forEach(function(s) {
+      var rows = Object.keys(st.m).filter(function(k) { return k.split('|')[0] == s; }).map(function(k) {
+        var q = st.m[k], pid = k.split('|')[1];
+        return '<div class="l"><span>' + esc(st.L[pid]) + '</span><b class="' + (q < 0 ? 'n' : '') + '">' + q + ' crates</b></div>';
+      }).join('');
+      h += '<div class="c"><h2>📦 ' + s + ' Stock</h2>' + (rows || '<small style="color:var(--mu)">No stock recorded.</small>') + '</div>';
+    });
 
-// Saves never overlap. A save requested mid-flight runs right after the current one.
-function save() {
-  if (!signedIn) return Promise.resolve(false);
-  if (running) { again = true; return running; }
-  running = (async () => {
-    let ok = true;
-    do {
-      again = false;
-      setSync('saving');
-      ok = (await Promise.all(Object.keys(TB).map(pushTable))).every(Boolean);
-    } while (again && ok);
-    running = null;
-    setSync(ok ? 'ok' : 'error');
-    if (!ok) toast('Not saved yet. Check your connection; it will retry when you are back online.', { type: 'err' });
-    return ok;
-  })();
-  return running;
-}
+    h += '<div class="c"><h3>System & Data</h3><div class="r"><button onclick="backup()">Download Backup</button><button onclick="exportCSV()">Export CSV</button></div><button onclick="logout()" style="background:var(--bd);color:var(--tx);margin-top:10px">Sign Out</button></div>';
 
-/* ==========================================
-   4. VIEWS
-   ========================================== */
-function recent(t, rows, fn) {
-  const n = shown[t] || PAGE, list = rows.slice(-n).reverse();
-  if (!list.length) return empty('Nothing yet');
-  return html`${list.map(x => html`<div class="line"><div class="grow">${fn(x)}</div><button class="x" type="button" data-act="del" data-t="${t}" data-id="${x.id}" aria-label="Delete this entry">×</button></div>`)}${rows.length > n ? html`<button class="btn ghost sm more" type="button" data-act="more" data-t="${t}">Show more</button>` : ''}`;
-}
-
-const banner = () => loadErr.length
-  ? html`<div class="banner" role="alert"><span>Couldn’t load: ${loadErr.map(k => TB[k]).join(', ')}. What you see may be incomplete.</span><button class="btn ghost sm" type="button" data-act="reload">Retry</button></div>`
-  : '';
-
-const V = {
-  home() {
-    const w = wkStart(), t = td();
-    const sa = S.sales.filter(s => s.date >= w);
-    const rev = sum(sa, s => s.qty * s.price);
-    const cash = sum(sa, s => s.paid) + sum(S.pay.filter(p => p.date >= w), p => p.amt);
-    const buy = sum(S.col.filter(c => c.date >= w), c => c.qty * c.buy);
-    const tr = sum(S.costs.filter(c => c.date >= w), c => c.amt);
-    const profit = cash - buy - tr;
-    const d = debts(), owed = sum(d, x => x.bal), late = d.filter(x => x.due < t).length;
-    const fo = sum(S.col.filter(c => !c.paid), c => c.qty * c.buy);
-    const st = stock();
-    return html`
-      <div class="stats">
-        <div class="stat hero"><span>Net cash profit this week</span><b data-count="${round2(profit)}">${gh(profit)}</b><small>Cash received − farm purchases − transport</small></div>
-        <div class="stat"><span>Sales this week</span><b>${gh(rev)}</b></div>
-        <div class="stat"><span>Cash received</span><b>${gh(cash)}</b></div>
-        <div class="stat"><span>Farm purchases</span><b>${gh(buy)}</b></div>
-        <div class="stat"><span>Transport</span><b>${gh(tr)}</b></div>
-        <button class="stat" type="button" data-go="credit"><span>Customers owe you</span><b class="${late ? 'neg' : ''}">${gh(owed)}</b>${late ? html`<small class="neg">${late} overdue</small>` : ''}</button>
-        <button class="stat" type="button" data-go="collect"><span>You owe farmers</span><b>${gh(fo)}</b></button>
-      </div>
-      ${Object.keys(st).map(shop => {
-        const items = Object.keys(st[shop]).map(pid => st[shop][pid]);
-        return html`<div class="card"><h2>${shop} stock</h2>${items.length
-          ? items.map(e => html`<div class="line"><span class="grow">${e.lbl}</span><b class="${e.qty < 0 ? 'neg' : e.qty === 0 ? 'muted' : ''}">${e.qty} ${e.qty === 1 ? 'crate' : 'crates'}</b></div>`)
-          : empty('No stock recorded yet.')}</div>`;
-      })}
-      <div class="foot"><button class="btn ghost" type="button" data-act="backup">Download backup</button><button class="btn ghost" type="button" data-act="logout">Sign out</button></div>`;
+    return h;
   },
 
-  collect() {
+  collect: function() {
     if (!S.prices.length) return noPrices();
-    const unpaid = S.col.filter(c => !c.paid);
-    return html`
-      <form class="card" data-form="addCol" novalidate>
-        <h2>Farm collection</h2>
-        <label>Date<input type="date" name="date" value="${td()}"></label>
-        <label>Farm · egg size<select name="pid">${farmOpts(last.pid)}</select></label>
-        <div class="row2">
-          <label>Crates<input name="qty" type="number" inputmode="decimal" step="any" min="0" autocomplete="off"></label>
-          <label>Farm price / crate<input name="buy" type="number" inputmode="decimal" step="any" min="0" autocomplete="off"></label>
-        </div>
-        <label>Goes to<select name="shop">${shopOpts(last.shop)}</select></label>
-        <label>Transport cost for this trip (optional)<input name="transport" type="number" inputmode="decimal" step="any" min="0" autocomplete="off"></label>
-        <label class="chk"><input type="checkbox" name="paid">Already paid the farmer</label>
-        <p class="total" data-total></p>
-        <button class="btn" type="submit">Save collection</button>
-      </form>
-      ${unpaid.length ? html`<div class="card"><h2>You owe farmers</h2>${unpaid.map(c => html`<div class="line"><div class="grow"><b>${c.lbl}</b><small>${dmy(c.date)} · ${c.qty} crates · ${gh(c.qty * c.buy)}</small></div><button class="btn ghost sm" type="button" data-act="farmPaid" data-id="${c.id}">Mark paid</button></div>`)}</div>` : ''}
-      <div class="card"><h3>Recent collections</h3>${recent('col', S.col, c => html`<b>${c.lbl}</b> · ${c.qty} crates<small>${dmy(c.date)} · ${c.shop} · ${gh(c.qty * c.buy)} · ${c.paid ? 'paid' : 'unpaid'}</small>`)}</div>`;
+    return '<div class="c"><h2>Farm collection</h2><label>Date<input type="date" id="c-d" value="' + td() + '"></label><label>Farm · egg size<select id="c-p" onchange="cp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="c-q" type="number" inputmode="decimal" oninput="cp(1)"></label><label>Farm price / crate<input id="c-b" type="number" inputmode="decimal" oninput="cp(1)"></label></div><label>Goes to<select id="c-s">' + shopOpts() + '</select></label><label>Transport cost<input id="c-t" type="number" inputmode="decimal"></label><label><input type="checkbox" id="c-pd" style="width:auto;margin-right:8px" onchange="$(\'c-paid-amt\').hidden = this.checked;">Paid in full</label><div id="c-paid-amt" hidden><label>Amount paid now<input id="c-pa" type="number" inputmode="decimal"></label></div><div id="c-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addCol()">Save collection</button></div>' +
+    '<div class="c"><h3>Recent collections</h3>' + S.col.slice(-5).reverse().map(function(c) {
+      var owed = c.qty * c.buy - (c.paid_amt || 0);
+      return '<div class="l"><div><b>' + esc(c.lbl) + '</b> · ' + c.qty + ' crates<small>' + c.date + ' · ' + c.shop + ' · ' + gh(c.qty * c.buy) + (owed <= 0 ? ' · Paid' : ' · Owe ' + gh(owed)) + '</small></div><button class="s" onclick="del(\'col\',\'' + c.id + '\')">×</button></div>';
+    }).join('') + '</div>';
   },
 
-  sell() {
+  sell: function() {
     if (!S.prices.length) return noPrices();
-    return html`
-      <form class="card" data-form="addSale" novalidate>
-        <h2>New sale</h2>
-        <datalist id="cl">${S.customers.map(c => html`<option value="${c.name}" label="${c.phone}"></option>`)}</datalist>
-        <div class="row2">
-          <label>Date<input type="date" name="date" value="${td()}"></label>
-          <label>Shop<select name="shop">${shopOpts(last.shop)}</select></label>
-        </div>
-        <label>Farm · egg size<select name="pid">${farmOpts(last.pid)}</select></label>
-        <div class="row2">
-          <label>Crates<input name="qty" type="number" inputmode="decimal" step="any" min="0" autocomplete="off"></label>
-          <label>Price / crate<input name="price" type="number" inputmode="decimal" step="any" min="0" autocomplete="off"></label>
-        </div>
-        <label>Customer (blank = walk-in)<input name="cust" list="cl" autocomplete="off" placeholder="Type or pick a customer"></label>
-        <label>Payment<select name="mode"><option value="f">Paid in full</option><option value="p">Part paid</option><option value="c">On credit</option></select></label>
-        <div data-show="p" hidden><label>Amount paid now<input name="paid" type="number" inputmode="decimal" step="any" min="0" autocomplete="off"></label></div>
-        <div data-show="due" hidden><label>Must pay back within<select name="days"><option value="7">1 week</option><option value="14">2 weeks</option><option value="21">3 weeks</option><option value="30">1 month</option></select></label></div>
-        <p class="total" data-total></p>
-        <p class="warn" data-warn hidden></p>
-        <button class="btn" type="submit">Save sale</button>
-      </form>
-      <div class="card"><h3>Recent sales and receipts</h3>${recent('sales', S.sales, s => {
-        const ph = waNumber(phoneOf(s.cust)), owed = s.qty * s.price - s.paid;
-        return html`<b>${s.lbl}</b> · ${s.qty} × ${gh(s.price)}<small>${dmy(s.date)} · ${s.cust || 'Walk-in'}${owed > .005 ? ' · owes ' + gh(owed) : ''}</small>${ph ? html`<a class="btn wa sm" href="https://wa.me/${ph}?text=${encodeURIComponent(receipt(s))}" target="_blank" rel="noopener noreferrer">Send receipt on WhatsApp</a>` : ''}`;
-      })}</div>`;
+    var cl = S.customers.map(function(c) { return '<option value="' + esc(c.name) + '" data-id="' + c.id + '"></option>'; }).join('');
+    return '<div class="c"><h2>New sale</h2><datalist id="cl">' + cl + '</datalist><div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label><label>Shop<select id="s-s">' + shopOpts() + '</select></label></div><label>Farm · egg size<select id="s-p" onchange="sp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="s-q" type="number" inputmode="decimal" oninput="sp(1)"></label><label>Price / crate<input id="s-pr" type="number" inputmode="decimal" oninput="sp(1)"></label></div><label>Customer<input id="s-c" list="cl" placeholder="Customer name"></label><label>Payment Method<select id="s-paym"><option>Cash</option><option>Mobile Money</option></select></label><label>Payment Status<select id="s-m" onchange="sp(1)"><option value="f">Paid in full</option><option value="p">Part paid</option><option value="c">On credit</option></select></label><div id="s-pt" hidden><label>Amount paid now<input id="s-a" type="number" inputmode="decimal"></label></div><div id="s-du" hidden><label>Due within<select id="s-dd"><option value="7">1 week</option><option value="14">2 weeks</option><option value="30">1 month</option></select></label></div><div id="s-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addSale()">Save sale</button></div>' +
+    '<div class="c"><h3>Recent Sales & Receipts</h3>' +
+    S.sales.slice(-5).reverse().map(function(s) {
+      var custObj = S.customers.find(function(c) { return c.id === s.cust_id; });
+      var phone = custObj ? custObj.phone : '';
+      var total = s.qty * s.price;
+      var dueAmt = total - s.paid;
+      var msg = encodeURIComponent('*AFA FRESH EGGS*\nDate: ' + s.date + '\nItem: ' + s.lbl + '\nQty: ' + s.qty + ' crates\nTotal: ' + gh(total) + '\nPaid: ' + gh(s.paid) + (dueAmt > 0 ? '\nBalance Due: ' + gh(dueAmt) : '\nStatus: PAID'));
+      var waBtn = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + msg + '" target="_blank">💬 Receipt</a>' : '';
+      return '<div class="l"><div><b>' + esc(s.lbl) + '</b> · ' + s.qty + ' × ' + gh(s.price) + '<small>' + s.date + ' · ' + esc(custObj ? custObj.name : 'Walk-in') + '</small>' + waBtn + '</div><button class="s" onclick="del(\'sales\',\'' + s.id + '\')">×</button></div>';
+    }).join('') + '</div>';
   },
 
-  credit() {
-    const d = debts(), t = td();
-    const custs = S.customers.slice().sort((a, b) => cmp(nkey(a.name), nkey(b.name)));
-    return html`
-      <div class="card"><h2>Who owes you</h2>${d.length ? d.map(x => {
-        const ph = phoneOf(x.n), wa = waNumber(ph), late = x.due < t;
-        const msg = 'Hello ' + x.n + ', this is a friendly reminder from AFA Fresh Eggs about your balance of ' + gh(x.bal) + ', due by ' + dmy(x.due) + '. Thank you!';
-        return html`<form class="debt" data-form="pay" data-key="${x.k}" novalidate>
-          <div class="line">
-            <div class="grow"><b>${x.n}</b>${ph ? html`<small><a href="tel:${telHref(ph)}">${ph}</a></small>` : html`<small class="neg">No phone saved. Add it under Customers below.</small>`}<small>Due ${dmy(x.due)}</small></div>
-            <div class="amt"><b>${gh(x.bal)}</b><br><span class="tag ${late ? '' : 'ok'}">${late ? 'Overdue' : 'Not due yet'}</span></div>
-          </div>
-          ${wa ? html`<a class="btn wa sm" href="https://wa.me/${wa}?text=${encodeURIComponent(msg)}" target="_blank" rel="noopener noreferrer">Send WhatsApp reminder</a>` : ''}
-          <div class="payrow"><input name="amt" type="number" inputmode="decimal" step="any" min="0" placeholder="Amount paid" autocomplete="off" aria-label="Amount paid by ${x.n}"><button class="btn ghost sm" type="button" data-act="fill" data-v="${round2(x.bal)}">Full</button><button class="btn sm" type="submit">Record</button></div>
-        </form>`;
-      }) : empty('Nobody owes you. Credit sales will appear here.')}</div>
-      <div class="card"><h3>Recent payments</h3>${recent('pay', S.pay, p => html`<b>${p.cust}</b> paid ${gh(p.amt)}<small>${dmy(p.date)}</small>`)}</div>
-      <form class="card" data-form="addCustomer" novalidate>
-        <h2>Add customer</h2>
-        <label>Name<input name="cname" placeholder="e.g. John Doe" autocomplete="off"></label>
-        <label>Phone number<input name="phone" type="tel" placeholder="e.g. 0241234567" autocomplete="off"></label>
-        <button class="btn" type="submit">Save customer</button>
-      </form>
-      <div class="card"><h2>Customers</h2>${custs.length ? custs.map(c => html`<div class="line"><div class="grow"><b>${c.name}</b><small>${c.phone || 'No phone'}</small></div>${c.phone ? html`<a class="btn ghost sm" href="tel:${telHref(c.phone)}">Call</a>` : ''}<button class="x" type="button" data-act="del" data-t="customers" data-id="${c.id}" aria-label="Delete ${c.name}">×</button></div>`) : empty('No customers saved yet.')}</div>`;
+  credit: function() {
+    var d = debts(), h = '<div class="c"><h2>Customer Credit & Directory</h2>';
+    h += '<div style="margin-bottom:14px"><input id="cu-n" placeholder="New customer name" style="margin-bottom:8px"><input id="cu-p" type="tel" placeholder="Phone number" style="margin-bottom:8px"><button onclick="addCustomer()">Add Customer</button></div>';
+    h += d.map(function(x, i) {
+      var custObj = S.customers.find(function(c){ return c.id === x.id; });
+      var phone = custObj ? custObj.phone : '';
+      var waMsg = encodeURIComponent('Hello ' + x.name + ', friendly reminder from AFA Fresh Eggs for your balance of ' + gh(x.bal) + '. Thank you!');
+      var waLink = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + waMsg + '" target="_blank">💬 WhatsApp Reminder</a>' : '';
+      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>'+esc(x.name)+'</b><small>📞 '+esc(phone||'None')+'</small></div><div style="text-align:right"><b>'+gh(x.bal)+'</b></div></div>' + waLink + '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa'+i+'" type="number" inputmode="decimal" placeholder="Amount" style="margin:0"><button onclick="pay(\''+x.id+'\', ' + i + ')" style="width:auto">Record Payment</button></div></div>';
+    }).join('') || '<small style="color:var(--mu)">No outstanding debts.</small>';
+    return h + '</div>';
   },
 
-  costs() {
-    const w = wkStart();
-    const tr = sum(S.costs.filter(c => c.date >= w), c => c.amt);
-    const cr = sum(S.col.filter(c => c.date >= w), c => c.qty);
-    return html`
-      <div class="stats">
-        <div class="stat"><span>Transport this week</span><b>${gh(tr)}</b></div>
-        <div class="stat"><span>Per crate collected</span><b>${cr ? gh(tr / cr) : '–'}</b></div>
-      </div>
-      <form class="card" data-form="addCost" novalidate>
-        <h2>Add transport or expense</h2>
-        <div class="row2">
-          <label>Date<input type="date" name="date" value="${td()}"></label>
-          <label>Amount<input name="amt" type="number" inputmode="decimal" step="any" min="0" autocomplete="off"></label>
-        </div>
-        <label>What for<input name="descr" placeholder="e.g. Fuel to Farm A" autocomplete="off"></label>
-        <button class="btn" type="submit">Save expense</button>
-      </form>
-      <div class="card"><h3>Recent expenses</h3>${recent('costs', S.costs, c => html`<b>${c.descr}</b> · ${gh(c.amt)}<small>${dmy(c.date)}</small>`)}</div>`;
+  costs: function() {
+    return '<div class="c"><h2>Add expense / transport</h2><div class="r"><label>Date<input type="date" id="x-d" value="' + td() + '"></label><label>Amount<input id="x-a" type="number" inputmode="decimal"></label></div><label>Description<input id="x-n" placeholder="e.g. Fuel"></label><button onclick="addCost()">Save Expense</button></div>' +
+    '<div class="c"><h3>Recent expenses</h3>' + S.costs.slice(-5).reverse().map(function(c) {
+      return '<div class="l"><div><b>' + esc(c.descr) + '</b><small>' + c.date + '</small></div><b>' + gh(c.amt) + '</b><button class="s" onclick="del(\'costs\',\'' + c.id + '\')">×</button></div>';
+    }).join('') + '</div>';
   },
 
-  prices() {
-    const farms = Array.from(new Set(S.prices.map(p => p.farm)));
-    return html`
-      <form class="card" data-form="addPrice" novalidate>
-        <h2>Add farm price</h2>
-        <datalist id="fl">${farms.map(f => html`<option value="${f}"></option>`)}</datalist>
-        <label>Farm<input name="farm" list="fl" placeholder="e.g. Farm A" autocomplete="off"></label>
-        <label>Egg size / type<input name="item" placeholder="e.g. Large" autocomplete="off"></label>
-        <div class="row2">
-          <label>Farm price / crate<input name="buy" type="number" inputmode="decimal" step="any" min="0" autocomplete="off"></label>
-          <label>Selling price / crate<input name="sell" type="number" inputmode="decimal" step="any" min="0" autocomplete="off"></label>
-        </div>
-        <button class="btn" type="submit">Add price</button>
-      </form>
-      <div class="card"><h2>Price list</h2>${S.prices.length ? S.prices.map(p => html`<div class="price">
-        <div class="line"><b class="grow">${p.farm} · ${p.item}</b><button class="x" type="button" data-act="del" data-t="prices" data-id="${p.id}" aria-label="Delete ${p.farm} ${p.item}">×</button></div>
-        <div class="row2">
-          <label>Farm price<input type="number" inputmode="decimal" step="any" min="0" value="${p.buy}" data-price="buy" data-id="${p.id}"></label>
-          <label>Selling price<input type="number" inputmode="decimal" step="any" min="0" value="${p.sell}" data-price="sell" data-id="${p.id}"></label>
-        </div>
-        <small class="margin" data-profit="${p.id}">${margin(p)}</small>
-      </div>`) : empty('No prices yet')}</div>`;
+  prices: function() {
+    return '<div class="c"><h2>Add farm price</h2><label>Farm<input id="n-f" placeholder="Farm A"></label><label>Egg size<input id="n-i" placeholder="Large"></label><div class="r"><label>Farm price<input id="n-b" type="number" inputmode="decimal"></label><label>Selling price<input id="n-s" type="number" inputmode="decimal"></label></div><button onclick="addPrice()">Add Price</button></div>' +
+    '<div class="c"><h2>Price list</h2>' + S.prices.map(function(p) {
+      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><b>' + esc(p.farm) + ' · ' + esc(p.item) + '</b><button class="s" onclick="delP(\'' + p.id + '\')">×</button></div><div class="r"><label>Farm<input type="number" inputmode="decimal" value="' + p.buy + '" onchange="upP(\'' + p.id + '\',\'buy\',this.value)"></label><label>Sell<input type="number" inputmode="decimal" value="' + p.sell + '" onchange="upP(\'' + p.id + '\',\'sell\',this.value)"></label></div></div>';
+    }).join('') + '</div>';
   }
 };
 
 /* ==========================================
-   5. RENDER, LIVE CALCULATIONS & ACTIONS
+   5. ACTIONS & HANDLERS
    ========================================== */
-function countUp(root) {
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  root.querySelectorAll('[data-count]').forEach(el => {
-    const to = toNum(el.dataset.count), t0 = performance.now(), dur = 650;
-    (function step(t) {
-      const p = Math.min(1, (t - t0) / dur);
-      el.textContent = gh(to * (1 - Math.pow(1 - p, 3)));
-      if (p < 1) requestAnimationFrame(step);
-    })(t0);
-  });
+function cp(t) {
+  var p = prod($('#c-p').value);
+  if (!p) return;
+  if (!t) $('#c-b').value = p.buy;
+  $('#c-tot').textContent = 'Total: ' + gh(num('#c-q') * num('#c-b'));
 }
 
-function buildNav() {
-  const nv = $('#nv');
-  nv.innerHTML = '<div class="nav-in">' + TABS.map(t =>
-    '<button type="button" data-go="' + t[0] + '"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[t[0]] + '</svg>' + t[1] + '</button>'
-  ).join('') + '</div>';
-  nv.hidden = false;
+function sp(t) {
+  var p = prod($('#s-p').value);
+  if (!p) return;
+  var pr = $('#s-pr');
+  if (!t) pr.value = p.sell;
+  var tot = num('#s-q') * num('#s-pr'), m = $('#s-m').value;
+  $('#s-pt').hidden = m != 'p';
+  $('#s-du').hidden = m == 'f';
+  $('#s-tot').textContent = 'Total: ' + gh(tot);
 }
 
-function setNav() {
-  const i = TABS.findIndex(t => t[0] === tab);
-  $('#nv .nav-in').style.setProperty('--tab', i);
-  $('#nv').querySelectorAll('button').forEach((b, j) => {
-    b.classList.toggle('on', j === i);
-    if (j === i) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
-  });
+function addCol() {
+  var p = prod($('#c-p').value), q = num('#c-q');
+  if (!p || q <= 0) return toast('Enter crates');
+  var pd = $('#c-pd').checked;
+  var paidAmt = pd ? q * num('#c-b') : num('#c-pa');
+  S.col.push({ id: uid(), date: $('#c-d').value || td(), pid: p.id, lbl: p.farm + ' · ' + p.item, qty: q, buy: num('#c-b'), shop: $('#c-s').value, paid_amt: paidAmt });
+  var t = num('#c-t');
+  if (t > 0) S.costs.push({ id: uid(), date: $('#c-d').value || td(), descr: 'Transport: ' + p.farm, amt: t });
+  save(); toast('Saved collection'); render();
 }
 
-function render(anim) {
-  const m = $('#m');
-  let out;
-  try { out = V[tab](); } catch (e) {
-    console.error(e);
-    out = html`<div class="card"><h2>Something went wrong</h2><p class="empty">This screen could not be shown. Your data is safe.</p><button class="btn" type="button" data-act="reload">Reload</button></div>`;
-  }
-  typing = false;
-  m.innerHTML = String(html`${banner()}${out}`);
-  $('#wk').textContent = 'Week of ' + dmy(wkStart());
-  setNav();
-  const fc = $('form[data-form="addCol"]', m); if (fc) liveCol(fc);
-  const fs = $('form[data-form="addSale"]', m); if (fs) liveSale(fs);
-  m.classList.remove('enter');
-  if (anim) {
-    Array.prototype.forEach.call(m.children, (c, i) => c.style.setProperty('--i', Math.min(i, 6)));
-    void m.offsetWidth;
-    m.classList.add('enter');
-    if (tab === 'home') countUp(m);
-  }
+function addSale() {
+  var p = prod($('#s-p').value), q = num('#s-q'), pr = num('#s-pr');
+  if (!p || q <= 0 || pr <= 0) return toast('Enter crates and price');
+  var m = $('#s-m').value, tot = q * pr;
+  var paid = m == 'f' ? tot : m == 'c' ? 0 : Math.min(num('#s-a'), tot);
+  var custInput = $('#s-c').value.trim();
+  var custObj = S.customers.find(function(c) { return c.name.toLowerCase() === custInput.toLowerCase(); });
+  if (m != 'f' && paid < tot && !custObj) return toast('Select or save customer for credit');
+  
+  S.sales.push({ id: uid(), date: $('#s-d').value || td(), pid: p.id, lbl: p.farm + ' · ' + p.item, qty: q, price: pr, shop: $('#s-s').value, cust_id: custObj ? custObj.id : null, paid: paid, method: $('#s-paym').value, due: paid < tot ? plus(+$('#s-dd').value) : '' });
+  save(); toast('Saved sale'); render();
 }
 
-function go(t) {
-  tab = t;
-  render(true);
-  window.scrollTo(0, 0);
-  $('#m').focus({ preventScroll: true });
+function addCustomer() {
+  var name = $('#cu-n').value.trim(), phone = $('#cu-p').value.trim();
+  if (!name) return toast('Enter name');
+  S.customers.push({ id: uid(), name: name, phone: phone });
+  save(); toast('Saved customer'); render();
 }
 
-// Show the result right away, then sync in the background. Undo is offered for deletes and edits.
-function commit(msg, undo) { render(); toast(msg, { undo: undo }); save(); }
-
-function bad(f, name, msg) {
-  const el = f.elements[name];
-  if (el) { el.classList.remove('bad'); void el.offsetWidth; el.classList.add('bad'); el.focus(); }
-  toast(msg, { type: 'err' });
+function pay(custId, i) {
+  var a = num('#pa' + i);
+  if (a <= 0) return toast('Enter amount');
+  S.pay.push({ id: uid(), date: td(), cust_id: custId, amt: a });
+  save(); toast('Recorded payment'); render();
 }
 
-function liveCol(f, t) {
-  const e = f.elements;
-  if (!t || t.name === 'pid') { const p = prod(e.pid.value); if (p) e.buy.value = p.buy; }
-  const tot = toNum(e.qty.value) * toNum(e.buy.value);
-  $('[data-total]', f).textContent = tot > 0 ? 'Total owed to farmer: ' + gh(tot) : '';
+function addCost() {
+  var a = num('#x-a');
+  if (a <= 0) return toast('Enter amount');
+  S.costs.push({ id: uid(), date: $('#x-d').value || td(), descr: $('#x-n').value.trim() || 'Expense', amt: a });
+  save(); toast('Saved expense'); render();
 }
 
-function liveSale(f, t) {
-  const e = f.elements, mode = e.mode.value;
-  if (!t || t.name === 'pid') { const p = prod(e.pid.value); if (p) e.price.value = p.sell; }
-  $('[data-show="p"]', f).hidden = mode !== 'p';
-  $('[data-show="due"]', f).hidden = mode === 'f';
-  const q = toNum(e.qty.value), tot = q * toNum(e.price.value);
-  let line = tot > 0 ? 'Total: ' + gh(tot) : '';
-  if (tot > 0 && mode === 'p') line += ' · Balance: ' + gh(Math.max(0, tot - toNum(e.paid.value)));
-  $('[data-total]', f).textContent = line;
-  const have = (stock()[pickShop(e.shop.value)] || {})[e.pid.value], w = $('[data-warn]', f);
-  const short = q > 0 && q > (have ? have.qty : 0);
-  w.hidden = !short;
-  if (short) w.textContent = 'Only ' + (have ? have.qty : 0) + ' crates recorded in stock here.';
+function addPrice() {
+  var f = $('#n-f').value.trim(), i = $('#n-i').value.trim();
+  if (!f || !i) return toast('Enter details');
+  S.prices.push({ id: uid(), farm: f, item: i, buy: num('#n-b'), sell: num('#n-s'), hist: [] });
+  save(); toast('Added price'); render();
 }
 
-function setPrice(el) {
-  const p = prod(el.dataset.id), field = el.dataset.price, v = toNum(el.value);
-  if (!p || (field !== 'buy' && field !== 'sell')) return;
-  if (el.value === '' || v < 0) { el.value = p[field]; return toast('Enter a price of 0 or more', { type: 'err' }); }
-  if (v === p[field]) return;
-  p.hist = (p.hist || []).concat([{ date: td(), buy: p.buy, sell: p.sell }]).slice(-50);
-  p[field] = v;
-  document.querySelectorAll('[data-profit]').forEach(n => { if (n.dataset.profit === String(p.id)) n.textContent = margin(p); });
-  toast('Price updated');
+function upP(id, f, v) {
+  var p = prod(id);
+  p[f] = parseFloat(v) || 0;
   save();
 }
 
-const FORMS = {
-  addCol(f, v) {
-    const p = prod(v.pid), q = toNum(v.qty), b = toNum(v.buy), t = toNum(v.transport);
-    if (!p) return bad(f, 'pid', 'Pick a farm first');
-    if (!(q > 0)) return bad(f, 'qty', 'Enter the number of crates');
-    if (!(b > 0)) return bad(f, 'buy', 'Enter the farm price per crate');
-    const d = v.date || td(), shop = pickShop(v.shop);
-    S.col.push({ id: uid(), date: d, pid: p.id, lbl: p.farm + ' · ' + p.item, qty: q, buy: b, shop: shop, paid: v.paid === 'on' });
-    if (t > 0) S.costs.push({ id: uid(), date: d, descr: 'Transport: ' + p.farm, amt: t });
-    last.pid = p.id; last.shop = shop;
-    commit('Collection saved');
-  },
-
-  addSale(f, v) {
-    const p = prod(v.pid), q = toNum(v.qty), pr = toNum(v.price), cust = (v.cust || '').trim(), mode = v.mode;
-    if (!p) return bad(f, 'pid', 'Pick a farm first');
-    if (!(q > 0)) return bad(f, 'qty', 'Enter the number of crates');
-    if (!(pr > 0)) return bad(f, 'price', 'Enter the price per crate');
-    const tot = round2(q * pr);
-    const paid = mode === 'f' ? tot : mode === 'c' ? 0 : Math.min(round2(toNum(v.paid)), tot);
-    if (mode === 'p' && !(paid > 0)) return bad(f, 'paid', 'Enter the amount paid now');
-    if (paid < tot && !cust) return bad(f, 'cust', 'Enter the customer name for credit');
-    const d = v.date || td(), shop = pickShop(v.shop);
-    S.sales.push({ id: uid(), date: d, pid: p.id, lbl: p.farm + ' · ' + p.item, qty: q, price: pr, shop: shop, cust: cust, paid: paid, due: paid < tot ? addDays(d, toNum(v.days) || 7) : '' });
-    last.pid = p.id; last.shop = shop;
-    commit('Sale saved');
-  },
-
-  pay(f, v) {
-    const x = debts().find(d => d.k === f.dataset.key), a = toNum(v.amt);
-    if (!x) return commit('That balance is already cleared');
-    if (!(a > 0)) return bad(f, 'amt', 'Enter the amount paid');
-    if (a > x.bal + .005) return bad(f, 'amt', 'That is more than the ' + gh(x.bal) + ' owed');
-    S.pay.push({ id: uid(), date: td(), cust: x.n, amt: round2(a) });
-    commit('Payment recorded');
-  },
-
-  addCost(f, v) {
-    const a = toNum(v.amt);
-    if (!(a > 0)) return bad(f, 'amt', 'Enter an amount');
-    S.costs.push({ id: uid(), date: v.date || td(), descr: (v.descr || '').trim() || 'Transport', amt: a });
-    commit('Expense saved');
-  },
-
-  addPrice(f, v) {
-    const farm = (v.farm || '').trim(), item = (v.item || '').trim(), b = toNum(v.buy), s = toNum(v.sell);
-    if (!farm) return bad(f, 'farm', 'Enter the farm name');
-    if (!item) return bad(f, 'item', 'Enter the egg size');
-    if (S.prices.some(p => nkey(p.farm) === nkey(farm) && nkey(p.item) === nkey(item))) return bad(f, 'item', 'That farm and egg size already exist');
-    if (!(b > 0)) return bad(f, 'buy', 'Enter the farm price per crate');
-    if (!(s > 0)) return bad(f, 'sell', 'Enter your selling price per crate');
-    S.prices.push({ id: uid(), farm: farm, item: item, buy: b, sell: s, hist: [] });
-    commit('Price added');
-  },
-
-  addCustomer(f, v) {
-    const name = (v.cname || '').trim(), phone = (v.phone || '').trim();
-    if (!name) return bad(f, 'cname', 'Enter the customer name');
-    if (phone && !waNumber(phone)) return bad(f, 'phone', 'Enter a valid phone number, e.g. 0241234567');
-    if (S.customers.some(c => nkey(c.name) === nkey(name))) return bad(f, 'cname', 'That customer is already saved');
-    S.customers.push({ id: uid(), name: name, phone: phone });
-    commit('Customer saved');
-  },
-
-  async login(f, v) {
-    const email = (v.email || '').trim();
-    if (!email) return bad(f, 'email', 'Enter your email');
-    if (!v.password) return bad(f, 'password', 'Enter your password');
-    const b = $('button[type="submit"]', f);
-    f.dataset.busy = '1'; b.disabled = true; b.textContent = 'Signing in…';
-    try {
-      const r = await SB.auth.signInWithPassword({ email: email, password: v.password });
-      if (r.error) throw r.error;
-      await start();
-    } catch (e) {
-      console.error('Sign-in failed', e);
-      delete f.dataset.busy; b.disabled = false; b.textContent = 'Sign in';
-      f.elements.password.value = '';
-      const net = !e.status || e.status >= 500;
-      toast(net ? 'Can’t reach the server. Check your connection.' : 'Wrong email or password', { type: 'err' });
-    }
-  }
-};
-
-const ACT = {
-  del(el) {
-    const t = el.dataset.t;
-    const i = Object.prototype.hasOwnProperty.call(TB, t) ? S[t].findIndex(x => x.id == el.dataset.id) : -1;
-    if (i < 0) return;
-    const item = S[t].splice(i, 1)[0];
-    commit('Deleted', () => { S[t].splice(Math.min(i, S[t].length), 0, item); });
-  },
-  more(el) { shown[el.dataset.t] = (shown[el.dataset.t] || PAGE) + MORE; render(); },
-  fill(el) { const i = el.closest('form').elements.amt; i.value = el.dataset.v; i.focus(); },
-  farmPaid(el) {
-    const c = S.col.find(x => x.id == el.dataset.id);
-    if (!c) return;
-    c.paid = true;
-    commit('Marked as paid', () => { c.paid = false; });
-  },
-  sync() { if (syncState === 'error') save(); },
-  theme() {
-    const root = document.documentElement;
-    const dark = (root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
-    root.dataset.theme = dark ? 'light' : 'dark';
-    try { localStorage.setItem('afa-theme', root.dataset.theme); } catch (e) { /* storage unavailable */ }
-  },
-  backup() {
-    const url = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
-    const a = document.createElement('a');
-    a.href = url; a.download = 'afa-backup-' + td() + '.json';
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast('Backup downloaded');
-  },
-  async logout() {
-    if (dirty()) {
-      const ok = await save();
-      if (!ok && !confirm('Some changes are not saved yet and will be lost if you sign out. Sign out anyway?')) return;
-    }
-    signedIn = false;
-    try { await SB.auth.signOut(); } catch (e) { console.error(e); }
-    resetState();
-    loginView();
-  },
-  async reload() {
-    if (!signedIn) return location.reload();
-    if (dirty()) await save();
-    await loadAll();
-    render();
-  }
-};
-
-/* ---- one set of listeners for the whole app (no inline handlers) ---- */
-document.addEventListener('click', e => {
-  const el = e.target.closest('[data-act],[data-go]');
-  if (!el) return;
-  if (el.dataset.go) return go(el.dataset.go);
-  if (ACT[el.dataset.act]) ACT[el.dataset.act](el, e);
-});
-
-document.addEventListener('submit', e => {
-  const f = e.target.closest('form[data-form]');
-  if (!f) return;
-  e.preventDefault();
-  if (f.dataset.busy || !FORMS[f.dataset.form]) return;
-  FORMS[f.dataset.form](f, Object.fromEntries(new FormData(f)));
-});
-
-function live(e) {
-  const f = e.target.form;
-  if (!f) return;
-  if (f.dataset.form === 'addCol') liveCol(f, e.target);
-  else if (f.dataset.form === 'addSale') liveSale(f, e.target);
+function delP(id) {
+  if (!confirm('Delete price?')) return;
+  S.prices = S.prices.filter(function(p) { return p.id != id; });
+  save(); render();
 }
-document.addEventListener('input', e => { typing = true; e.target.classList.remove('bad'); live(e); });
-document.addEventListener('change', e => {
-  live(e);
-  if (e.target.dataset && e.target.dataset.price) setPrice(e.target);
-});
 
 /* ==========================================
-   6. START-UP & SESSION
+   6. NAVIGATION & BOOT
    ========================================== */
-function resetState() {
-  Object.keys(TB).forEach(k => { S[k] = []; });
-  snap = {}; loadErr = []; typing = false;
-  $('#nv').hidden = true;
-  $('#sync').hidden = true;
+var TABS = [
+  ['home', '<svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>', 'Home'],
+  ['collect', '<svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>', 'Collect'],
+  ['sell', '<svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>', 'Sell'],
+  ['credit', '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>', 'Credit'],
+  ['costs', '<svg viewBox="0 0 24 24"><path d="M18 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM19.5 9.5H17V6h2.5v3.5zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm13-1c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2-3H3V6h14v4h3.5l1.5 2.05V14z"/></svg>', 'Costs'],
+  ['prices', '<svg viewBox="0 0 24 24"><path d="M3 18h12v-2H3v2zM3 6v2h18V6H3zm0 7h18v-2H3v2z"/></svg>', 'Prices']
+];
+
+function go(t) {
+  tab = t; render(); window.scrollTo(0, 0);
+}
+
+function render() {
+  $('#nv').innerHTML = TABS.map(function(t) { return '<button class="' + (t[0] == tab ? 'a' : '') + '" onclick="go(\'' + t[0] + '\')">' + t[1] + t[2] + '</button>'; }).join('');
+  $('#m').innerHTML = V[tab]();
+  $('#wk').textContent = 'Week of ' + wkStart();
+  if (tab == 'collect') cp();
+  if (tab == 'sell') sp();
+}
+
+function backup() {
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
+  a.download = 'afa-backup-' + td() + '.json';
+  a.click();
+}
+
+function exportCSV() {
+  var csv = 'Date,Type,Details,Amount\n';
+  S.sales.forEach(function(s) { csv += s.date + ',Sale,"' + s.lbl + '",' + (s.qty * s.price) + '\n'; });
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'afa-sales-' + td() + '.csv';
+  a.click();
 }
 
 function loginView() {
-  signedIn = false;
-  $('#nv').hidden = true;
-  $('#sync').hidden = true;
-  $('#wk').textContent = 'Sign in to continue';
-  const m = $('#m');
-  m.innerHTML = String(html`<form class="card" data-form="login" novalidate>
-    <h2>Sign in</h2>
-    <label>Email<input name="email" type="email" autocomplete="username" autocapitalize="none" spellcheck="false"></label>
-    <label>Password<input name="password" type="password" autocomplete="current-password"></label>
-    <button class="btn" type="submit">Sign in</button>
-  </form>`);
-  m.classList.remove('enter'); void m.offsetWidth; m.classList.add('enter');
+  $('#nv').innerHTML = '';
+  $('#m').innerHTML = '<div class="c"><h2>Sign in</h2><label>Email<input id="l-e" type="email" autocomplete="username"></label><label>Password<input id="l-p" type="password" autocomplete="current-password"></label><button onclick="login()">Sign in</button></div>';
 }
 
-function fatal(msg) {
-  $('#m').innerHTML = String(html`<div class="card"><h2>Can’t start the app</h2><p class="empty">${msg}</p><button class="btn" type="button" data-act="reload">Try again</button></div>`);
+async function login() {
+  var r = await SB.auth.signInWithPassword({ email: $('#l-e').value.trim(), password: $('#l-p').value });
+  if (r.error) return toast('Wrong email or password');
+  await load(); render();
 }
 
-async function start() {
-  signedIn = true;
-  $('#m').innerHTML = '<div class="skel"></div><div class="skel"></div><div class="skel short"></div>';
-  $('#sync').hidden = false;
-  setSync('ok');
-  buildNav();
-  tab = 'home';
-  await loadAll();
-  render(true);
+async function logout() {
+  await SB.auth.signOut();
+  loginView();
 }
-
-// Pick up changes made on another phone when the app comes back to the foreground.
-document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState !== 'visible' || !signedIn || running || typing || Date.now() - lastLoad < 30000) return;
-  const a = document.activeElement;
-  if (a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName)) return;
-  if (dirty()) return save();
-  await loadAll();
-  if (!typing) render();
-});
-
-window.addEventListener('online', () => { if (signedIn && dirty()) save(); });
-window.addEventListener('beforeunload', e => { if (signedIn && (running || dirty())) { e.preventDefault(); e.returnValue = ''; } });
 
 async function boot() {
-  try {
-    const t = localStorage.getItem('afa-theme');
-    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
-  } catch (e) { /* storage unavailable */ }
-
-  if (!SB_URL || SB_URL.indexOf('PASTE') === 0) return fatal('Setup needed: set SB_URL and SB_KEY at the top of app.js.');
-  if (!window.supabase) return fatal('The data library could not load. Check your internet connection and try again.');
-
-  SB = window.supabase.createClient(SB_URL, SB_KEY);
-  SB.auth.onAuthStateChange(ev => {
-    if (ev === 'SIGNED_OUT' && signedIn) { resetState(); loginView(); toast('You were signed out. Please sign in again.'); }
-  });
-
-  let session = null;
-  try { session = (await SB.auth.getSession()).data.session; } catch (e) { console.error(e); }
-  if (session) await start(); else loginView();
+  var savedTheme = localStorage.getItem('afa_theme');
+  if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+  
+  SB = supabase.createClient(SB_URL, SB_KEY);
+  var s = await SB.auth.getSession();
+  if (s.data.session) {
+    await load(); render();
+  } else {
+    loginView();
+  }
 }
 
 boot();
-})();
