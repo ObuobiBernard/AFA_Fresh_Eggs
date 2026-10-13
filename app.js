@@ -1,8 +1,8 @@
 /* ==========================================
    1. CONFIGURATION & APP STATE
    ========================================== */
-var SB_URL = 'vitalucvobokjkdogwiq.supabase.co';
-var SB_KEY = 'sb_publishable_H57950cizG2oEs2q6O2_fQ_gv7v8DgB';
+var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
+var SB_KEY = 'sb_publishable_H57950cizG2oEs2q602_FQ_gv7v8DgB';
 var tab = 'home';
 var SHOPS = ['Main Shop', 'Market Shop'];
 var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
@@ -406,8 +406,12 @@ function exportCSV() {
 }
 
 function loginView() {
-  $('#nv').innerHTML = '';
-  $('#m').innerHTML = '<div class="c"><h2>Sign in</h2><label>Email<input id="l-e" type="email" autocomplete="username"></label><label>Password<input id="l-p" type="password" autocomplete="current-password"></label><button onclick="login()">Sign in</button></div>';
+  var nv = $('#nv');
+  var m = $('#m');
+  if (nv) nv.innerHTML = '';
+  if (m) {
+    m.innerHTML = '<div class="c"><h2>Sign in</h2><label>Email<input id="l-e" type="email" autocomplete="username"></label><label>Password<input id="l-p" type="password" autocomplete="current-password"></label><button onclick="login()">Sign in</button></div>';
+  }
 }
 
 async function login() {
@@ -422,14 +426,31 @@ async function logout() {
 }
 
 async function boot() {
-  var savedTheme = localStorage.getItem('afa_theme');
-  if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
-  
-  SB = supabase.createClient(SB_URL, SB_KEY);
-  var s = await SB.auth.getSession();
-  if (s.data.session) {
-    await load(); render();
-  } else {
+  try {
+    var savedTheme = localStorage.getItem('afa_theme');
+    if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+    
+    if (typeof supabase === 'undefined') {
+      throw new Error('Supabase library failed to load.');
+    }
+
+    SB = supabase.createClient(SB_URL, SB_KEY);
+    var s = await SB.auth.getSession();
+    
+    if (s.data && s.data.session) {
+      try {
+        await load();
+        render();
+      } catch (loadErr) {
+        console.error('Load failed, resetting to login:', loadErr);
+        await SB.auth.signOut();
+        loginView();
+      }
+    } else {
+      loginView();
+    }
+  } catch (err) {
+    console.error('Boot error:', err);
     loginView();
   }
 }
