@@ -1,7 +1,7 @@
 /* ==========================================
    1. CONFIGURATION & APP STATE
    ========================================== */
-var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
+var SB_URL = 'vitalucvobokjkdogwiq.supabase.co';
 var SB_KEY = 'sb_publishable_H57950cizG2oEs2q6O2_fQ_gv7v8DgB';
 var tab = 'home';
 var SHOPS = ['Main Shop', 'Market Shop'];
