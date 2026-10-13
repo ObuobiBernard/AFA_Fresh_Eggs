@@ -4,37 +4,45 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>AFA Fresh Eggs Manager</title>
+
+  <!-- Security: only this site, the pinned Supabase script and your Supabase project are allowed.
+       No inline scripts or inline styles run. If you change the Supabase URL in app.js,
+       change connect-src below to match. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/; connect-src https://vitalucvobokjkdogwiq.supabase.co; style-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#1F5E3B">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%231F5E3B'/%3E%3Cpath d='M50 20C65 20 74 37 74 50C74 64 63 73 50 73C37 73 26 64 26 50C26 37 35 20 50 20Z' fill='%23FFF6E0'/%3E%3Ccircle cx='50' cy='56' r='10' fill='%23F5A623'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- App Header & Logo Mark -->
   <header>
-    <svg width="38" height="38" viewBox="0 0 100 100" aria-hidden="true">
+    <svg class="logo" width="38" height="38" viewBox="0 0 100 100" aria-hidden="true">
       <circle cx="50" cy="50" r="48" fill="#FFF6E0"/>
       <circle cx="50" cy="50" r="42" fill="#1F5E3B"/>
       <path d="M50 22C64 22 72 38 72 50C72 63 62 71 50 71C38 71 28 63 28 50C28 38 36 22 50 22Z" fill="#FFF6E0"/>
       <circle cx="50" cy="55" r="9" fill="#F5A623"/>
       <path d="M50 72C42 74 34 71 31 65C39 64 47 66 50 72ZM50 72C58 74 66 71 69 65C61 64 53 66 50 72Z" fill="#7FC77A"/>
     </svg>
-    <div>
-      <b>AFA FRESH EGGS</b>
+    <div class="brand">
+      <b>AFA Fresh Eggs</b>
       <small id="wk"></small>
     </div>
+    <button id="sync" class="sync" type="button" data-act="sync" data-state="ok" hidden><i></i><span>Synced</span></button>
+    <button class="icon-btn" type="button" data-act="theme" aria-label="Switch light or dark theme">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 010 18z" fill="currentColor"/></svg>
+    </button>
   </header>
 
-  <!-- Dynamic Main Content Container -->
-  <main id="m"></main>
+  <main id="m" tabindex="-1"></main>
+  <nav id="nv" aria-label="Main" hidden></nav>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
 
-  <!-- Bottom Navigation Menu -->
-  <nav id="nv"></nav>
+  <noscript><p class="card">This app needs JavaScript turned on.</p></noscript>
 
-  <!-- Floating Feedback Toast -->
-  <div id="toast" hidden></div>
-
-  <!-- Supabase CDN Client Script -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-  <!-- Application Logic Script -->
-  <script src="app.js"></script>
+  <!-- Pinned version. For extra protection, add an integrity="sha384-..." attribute:
+       curl -s <this URL> | openssl dgst -sha384 -binary | openssl base64 -A -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js" crossorigin="anonymous" defer></script>
+  <script src="app.js" defer></script>
 </body>
 </html>
