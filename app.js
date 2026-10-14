@@ -17,33 +17,51 @@ var saveQueued = false;
    ========================================== */
 async function load() {
   setSyncStatus('saving', 'Loading...');
+  var hadError = false;
+
+  // Load cached data first as fallback
+  try {
+    var cached = localStorage.getItem('afa_cache');
+    if (cached) S = Object.assign(S, JSON.parse(cached));
+  } catch (e) {}
+
   for (var k in TB) {
     try {
       var r = await SB.from(TB[k]).select('*');
       if (r.error) throw r.error;
-      S[k] = (r.data || []).map(function(x) { 
+      S[k] = (r.data || []).map(function(x) {
         var clean = Object.assign({}, x);
-        delete clean.created_at; 
-        return clean; 
+        delete clean.created_at;
+        return clean;
       });
       snap[k] = {};
       S[k].forEach(function(x) { snap[k][x.id] = JSON.stringify(x); });
     } catch (err) {
+      hadError = true;
       console.error('Error loading table ' + k, err);
-      setSyncStatus('offline', 'Offline Mode');
-      toast('Operating offline');
     }
   }
-  if (navigator.onLine) setSyncStatus('synced', 'Synced');
+
+  try { localStorage.setItem('afa_cache', JSON.stringify(S)); } catch (e) {}
+
+  if (hadError || !navigator.onLine) {
+    setSyncStatus('offline', 'Offline Mode');
+    toast('Operating in offline mode');
+  } else {
+    setSyncStatus('synced', 'Synced');
+  }
 }
 
 async function save() {
+  try { localStorage.setItem('afa_cache', JSON.stringify(S)); } catch (e) {}
+
   if (isSaving) {
     saveQueued = true;
     return;
   }
   isSaving = true;
   setSyncStatus('saving', 'Saving...');
+  var failed = false;
 
   for (var k in TB) {
     var old = snap[k] || {}, ids = {}, up = [];
@@ -65,24 +83,32 @@ async function save() {
       S[k].forEach(function(x) { snap[k][x.id] = JSON.stringify(x); });
     } catch (e) {
       console.error('Save error on ' + k, e);
-      setSyncStatus('offline', 'Not Saved');
-      isSaving = false;
-      toast('Save failed. Queued for retry.');
-      return;
+      failed = true;
     }
   }
 
   isSaving = false;
-  setSyncStatus('synced', 'Synced');
+  if (failed) {
+    setSyncStatus('offline', 'Not Saved');
+    toast('Save failed. Will retry when online.');
+  } else {
+    setSyncStatus('synced', 'Synced');
+  }
+
   if (saveQueued) {
     saveQueued = false;
     save();
   }
 }
 
+window.addEventListener('online', function() {
+  if (SB) save();
+});
+
 function setSyncStatus(st, txt) {
   var pill = $('#sync-pill');
   if (!pill) return;
+  pill.hidden = !st;
   pill.className = 'sync-pill ' + st;
   pill.textContent = txt;
 }
@@ -92,18 +118,29 @@ function setSyncStatus(st, txt) {
    ========================================== */
 var $ = function(s) { return document.querySelector(s); };
 var uid = function() { return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2, 9); };
-var td = function() { return new Date().toISOString().slice(0, 10); };
-var plus = function(d) { return new Date(Date.now() + d * 864e5).toISOString().slice(0, 10); };
-var gh = function(n) { return 'GH₵ ' + (Math.round(n * 100) / 100).toLocaleString(); };
-var esc = function(s) { return String(s == null ? '' : s).replace(/[&<>'"']/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
-var sum = function(a, f) { return a.reduce(function(t, x) { return t + f(x); }, 0); };
-var num = function(id) { return parseFloat($(id).value) || 0; };
 
+function localDateStr(d) {
+  var yr = d.getFullYear();
+  var mo = String(d.getMonth() + 1).padStart(2, '0');
+  var da = String(d.getDate()).padStart(2, '0');
+  return yr + '-' + mo + '-' + da;
+}
+var td = function() { return localDateStr(new Date()); };
+var plus = function(days) {
+  var d = new Date();
+  d.setDate(d.getDate() + days);
+  return localDateStr(d);
+};
 function wkStart() {
   var x = new Date();
   x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
-  return x.toISOString().slice(0, 10);
+  return localDateStr(x);
 }
+
+var gh = function(n) { return 'GH₵ ' + (Math.round((Number(n) || 0) * 100) / 100).toLocaleString(); };
+var esc = function(s) { return String(s == null ? '' : s).replace(/[&<>'"]/g, function(c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
+var sum = function(a, f) { return a.reduce(function(t, x) { return t + f(x); }, 0); };
+var num = function(id) { var el = $(id); return el ? (parseFloat(el.value) || 0) : 0; };
 
 function toast(t) {
   var e = $('#toast');
@@ -111,32 +148,34 @@ function toast(t) {
   e.textContent = t;
   e.hidden = false;
   clearTimeout(toast.h);
-  toast.h = setTimeout(function() { e.hidden = true; }, 3000);
+  toast.h = setTimeout(function() { e.hidden = true; }, 3500);
 }
 
 function toggleTheme() {
   var root = document.documentElement;
-  var current = root.getAttribute('data-theme');
-  var next = current === 'dark' ? 'light' : 'dark';
+  var isDark = root.getAttribute('data-theme') === 'dark' ||
+    (!root.getAttribute('data-theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  var next = isDark ? 'light' : 'dark';
   root.setAttribute('data-theme', next);
   localStorage.setItem('afa_theme', next);
 }
 
 function prod(id) { return S.prices.find(function(p) { return p.id == id; }); }
-function pOpts() { return S.prices.map(function(p) { return '<option value="' + p.id + '">' + esc(p.farm) + ' · ' + esc(p.item) + '</option>'; }).join(''); }
-function shopOpts() { return SHOPS.map(function(s) { return '<option>' + s + '</option>'; }).join(''); }
+function cust(id) { return S.customers.find(function(c) { return c.id == id; }); }
+function pOpts() { return S.prices.map(function(p) { return '<option value="' + esc(p.id) + '">' + esc(p.farm) + ' · ' + esc(p.item) + '</option>'; }).join(''); }
+function shopOpts() { return SHOPS.map(function(s) { return '<option>' + esc(s) + '</option>'; }).join(''); }
 function noPrices() { return '<div class="c">Add your farms and prices first in the <b>Prices</b> tab.</div>'; }
 
 function formatPhone(p) {
   if (!p) return '';
-  var clean = p.replace(/\D/g, '');
+  var clean = String(p).replace(/\D/g, '');
   if (clean.startsWith('0')) clean = '233' + clean.slice(1);
   return clean;
 }
 
 function debts() {
   var m = {};
-  S.sales.forEach(function(s) {
+  S.sales.slice().sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); }).forEach(function(s) {
     if (!s.cust_id) return;
     var o = s.qty * s.price - s.paid;
     var c = m[s.cust_id] = m[s.cust_id] || { id: s.cust_id, l: [], p: 0 };
@@ -155,8 +194,13 @@ function debts() {
       p -= t;
     });
     var o = c.l.filter(function(x) { return x.o > 0.005; });
-    var custObj = S.customers.find(function(cu) { return cu.id === c.id; });
-    return { id: c.id, name: custObj ? custObj.name : 'Unknown', bal: sum(o, function(x) { return x.o; }), due: o.length ? o.map(function(x) { return x.due; }).sort()[0] : '' };
+    var custObj = cust(c.id);
+    return {
+      id: c.id,
+      name: custObj ? custObj.name : 'Unknown',
+      bal: sum(o, function(x) { return x.o; }),
+      due: o.length ? o.map(function(x) { return x.due; }).sort()[0] : ''
+    };
   }).filter(function(c) { return c.bal > 0.005; });
 }
 
@@ -173,6 +217,16 @@ function del(t, id) {
   save();
   render();
   toast('Deleted entry');
+}
+
+function downloadFile(content, type, filename) {
+  var blob = new Blob([content], { type: type });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
 }
 
 /* ==========================================
@@ -219,7 +273,7 @@ var V = {
         var q = st.m[k], pid = k.split('|')[1];
         return '<div class="l"><span>' + esc(st.L[pid]) + '</span><b class="' + (q < 0 ? 'n' : '') + '">' + q + ' crates</b></div>';
       }).join('');
-      h += '<div class="c"><h2>📦 ' + s + ' Stock</h2>' + (rows || '<small style="color:var(--mu)">No stock recorded.</small>') + '</div>';
+      h += '<div class="c"><h2>📦 ' + esc(s) + ' Stock</h2>' + (rows || '<small style="color:var(--mu)">No stock recorded.</small>') + '</div>';
     });
 
     h += '<div class="c"><h3>System & Data</h3><div class="r"><button onclick="backup()">Download Backup</button><button onclick="exportCSV()">Export CSV</button></div><button onclick="logout()" style="background:var(--bd);color:var(--tx);margin-top:10px">Sign Out</button></div>';
@@ -229,54 +283,54 @@ var V = {
 
   collect: function() {
     if (!S.prices.length) return noPrices();
-    return '<div class="c"><h2>Farm collection</h2><label>Date<input type="date" id="c-d" value="' + td() + '"></label><label>Farm · egg size<select id="c-p" onchange="cp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="c-q" type="number" inputmode="decimal" oninput="cp(1)"></label><label>Farm price / crate<input id="c-b" type="number" inputmode="decimal" oninput="cp(1)"></label></div><label>Goes to<select id="c-s">' + shopOpts() + '</select></label><label>Transport cost<input id="c-t" type="number" inputmode="decimal"></label><label><input type="checkbox" id="c-pd" style="width:auto;margin-right:8px" onchange="$(\'c-paid-amt\').hidden = this.checked;">Paid in full</label><div id="c-paid-amt" hidden><label>Amount paid now<input id="c-pa" type="number" inputmode="decimal"></label></div><div id="c-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addCol()">Save collection</button></div>' +
-    '<div class="c"><h3>Recent collections</h3>' + S.col.slice(-5).reverse().map(function(c) {
+    return '<div class="c"><h2>Farm collection</h2><label>Date<input type="date" id="c-d" value="' + td() + '"></label><label>Farm · egg size<select id="c-p" onchange="cp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="c-q" type="number" inputmode="decimal" oninput="cp(1)"></label><label>Farm price / crate<input id="c-b" type="number" inputmode="decimal" oninput="cp(1)"></label></div><label>Goes to<select id="c-s">' + shopOpts() + '</select></label><label>Transport cost<input id="c-t" type="number" inputmode="decimal"></label><label><input type="checkbox" id="c-pd" checked style="width:auto;margin-right:8px" onchange="$(\'#c-paid-amt\').hidden = this.checked;">Paid in full</label><div id="c-paid-amt" hidden><label>Amount paid now<input id="c-pa" type="number" inputmode="decimal"></label></div><div id="c-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addCol()">Save collection</button></div>' +
+    '<div class="c"><h3>Recent collections</h3>' + (S.col.slice(-5).reverse().map(function(c) {
       var owed = c.qty * c.buy - (c.paid_amt || 0);
-      return '<div class="l"><div><b>' + esc(c.lbl) + '</b> · ' + c.qty + ' crates<small>' + c.date + ' · ' + c.shop + ' · ' + gh(c.qty * c.buy) + (owed <= 0 ? ' · Paid' : ' · Owe ' + gh(owed)) + '</small></div><button class="s" onclick="del(\'col\',\'' + c.id + '\')">×</button></div>';
-    }).join('') + '</div>';
+      return '<div class="l"><div><b>' + esc(c.lbl) + '</b> · ' + c.qty + ' crates<small>' + esc(c.date) + ' · ' + esc(c.shop) + ' · ' + gh(c.qty * c.buy) + (owed <= 0 ? ' · Paid' : ' · Owe ' + gh(owed)) + '</small></div><button class="s" onclick="del(\'col\',\'' + esc(c.id) + '\')">×</button></div>';
+    }).join('') || '<small style="color:var(--mu)">No collections yet.</small>') + '</div>';
   },
 
   sell: function() {
     if (!S.prices.length) return noPrices();
-    var cl = S.customers.map(function(c) { return '<option value="' + esc(c.name) + '" data-id="' + c.id + '"></option>'; }).join('');
-    return '<div class="c"><h2>New sale</h2><datalist id="cl">' + cl + '</datalist><div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label><label>Shop<select id="s-s">' + shopOpts() + '</select></label></div><label>Farm · egg size<select id="s-p" onchange="sp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="s-q" type="number" inputmode="decimal" oninput="sp(1)"></label><label>Price / crate<input id="s-pr" type="number" inputmode="decimal" oninput="sp(1)"></label></div><label>Customer<input id="s-c" list="cl" placeholder="Customer name"></label><label>Payment Method<select id="s-paym"><option>Cash</option><option>Mobile Money</option></select></label><label>Payment Status<select id="s-m" onchange="sp(1)"><option value="f">Paid in full</option><option value="p">Part paid</option><option value="c">On credit</option></select></label><div id="s-pt" hidden><label>Amount paid now<input id="s-a" type="number" inputmode="decimal"></label></div><div id="s-du" hidden><label>Due within<select id="s-dd"><option value="7">1 week</option><option value="14">2 weeks</option><option value="30">1 month</option></select></label></div><div id="s-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addSale()">Save sale</button></div>' +
+    var cl = S.customers.map(function(c) { return '<option value="' + esc(c.name) + '"></option>'; }).join('');
+    return '<div class="c"><h2>New sale</h2><datalist id="cl">' + cl + '</datalist><div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label><label>Shop<select id="s-s">' + shopOpts() + '</select></label></div><label>Farm · egg size<select id="s-p" onchange="sp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="s-q" type="number" inputmode="decimal" oninput="sp(1)"></label><label>Price / crate<input id="s-pr" type="number" inputmode="decimal" oninput="sp(1)"></label></div><label>Customer<input id="s-c" list="cl" placeholder="Customer name (or Walk-in)"></label><label>Payment Method<select id="s-paym"><option>Cash</option><option>Mobile Money</option></select></label><label>Payment Status<select id="s-m" onchange="sp(1)"><option value="f">Paid in full</option><option value="p">Part paid</option><option value="c">On credit</option></select></label><div id="s-pt" hidden><label>Amount paid now<input id="s-a" type="number" inputmode="decimal"></label></div><div id="s-du" hidden><label>Due within<select id="s-dd"><option value="7">1 week</option><option value="14">2 weeks</option><option value="30">1 month</option></select></label></div><div id="s-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addSale()">Save sale</button></div>' +
     '<div class="c"><h3>Recent Sales & Receipts</h3>' +
-    S.sales.slice(-5).reverse().map(function(s) {
-      var custObj = S.customers.find(function(c) { return c.id === s.cust_id; });
+    (S.sales.slice(-5).reverse().map(function(s) {
+      var custObj = cust(s.cust_id);
       var phone = custObj ? custObj.phone : '';
       var total = s.qty * s.price;
       var dueAmt = total - s.paid;
       var msg = encodeURIComponent('*AFA FRESH EGGS*\nDate: ' + s.date + '\nItem: ' + s.lbl + '\nQty: ' + s.qty + ' crates\nTotal: ' + gh(total) + '\nPaid: ' + gh(s.paid) + (dueAmt > 0 ? '\nBalance Due: ' + gh(dueAmt) : '\nStatus: PAID'));
-      var waBtn = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + msg + '" target="_blank">💬 Receipt</a>' : '';
-      return '<div class="l"><div><b>' + esc(s.lbl) + '</b> · ' + s.qty + ' × ' + gh(s.price) + '<small>' + s.date + ' · ' + esc(custObj ? custObj.name : 'Walk-in') + '</small>' + waBtn + '</div><button class="s" onclick="del(\'sales\',\'' + s.id + '\')">×</button></div>';
-    }).join('') + '</div>';
+      var waBtn = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + msg + '" target="_blank" rel="noopener">💬 Receipt</a>' : '';
+      return '<div class="l"><div><b>' + esc(s.lbl) + '</b> · ' + s.qty + ' × ' + gh(s.price) + '<small>' + esc(s.date) + ' · ' + esc(custObj ? custObj.name : 'Walk-in') + '</small>' + waBtn + '</div><button class="s" onclick="del(\'sales\',\'' + esc(s.id) + '\')">×</button></div>';
+    }).join('') || '<small style="color:var(--mu)">No sales yet.</small>') + '</div>';
   },
 
   credit: function() {
     var d = debts(), h = '<div class="c"><h2>Customer Credit & Directory</h2>';
     h += '<div style="margin-bottom:14px"><input id="cu-n" placeholder="New customer name" style="margin-bottom:8px"><input id="cu-p" type="tel" placeholder="Phone number" style="margin-bottom:8px"><button onclick="addCustomer()">Add Customer</button></div>';
     h += d.map(function(x, i) {
-      var custObj = S.customers.find(function(c){ return c.id === x.id; });
+      var custObj = cust(x.id);
       var phone = custObj ? custObj.phone : '';
       var waMsg = encodeURIComponent('Hello ' + x.name + ', friendly reminder from AFA Fresh Eggs for your balance of ' + gh(x.bal) + '. Thank you!');
-      var waLink = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + waMsg + '" target="_blank">💬 WhatsApp Reminder</a>' : '';
-      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>'+esc(x.name)+'</b><small>📞 '+esc(phone||'None')+'</small></div><div style="text-align:right"><b>'+gh(x.bal)+'</b></div></div>' + waLink + '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa'+i+'" type="number" inputmode="decimal" placeholder="Amount" style="margin:0"><button onclick="pay(\''+x.id+'\', ' + i + ')" style="width:auto">Record Payment</button></div></div>';
+      var waLink = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + waMsg + '" target="_blank" rel="noopener">💬 WhatsApp Reminder</a>' : '';
+      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>' + esc(x.name) + '</b><small>📞 ' + esc(phone || 'None') + (x.due ? ' · Due ' + esc(x.due) : '') + '</small></div><div style="text-align:right"><b>' + gh(x.bal) + '</b></div></div>' + waLink + '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa' + i + '" type="number" inputmode="decimal" placeholder="Amount" style="margin:0"><button onclick="pay(\'' + esc(x.id) + '\', ' + i + ')" style="width:auto">Record Payment</button></div></div>';
     }).join('') || '<small style="color:var(--mu)">No outstanding debts.</small>';
     return h + '</div>';
   },
 
   costs: function() {
     return '<div class="c"><h2>Add expense / transport</h2><div class="r"><label>Date<input type="date" id="x-d" value="' + td() + '"></label><label>Amount<input id="x-a" type="number" inputmode="decimal"></label></div><label>Description<input id="x-n" placeholder="e.g. Fuel"></label><button onclick="addCost()">Save Expense</button></div>' +
-    '<div class="c"><h3>Recent expenses</h3>' + S.costs.slice(-5).reverse().map(function(c) {
-      return '<div class="l"><div><b>' + esc(c.descr) + '</b><small>' + c.date + '</small></div><b>' + gh(c.amt) + '</b><button class="s" onclick="del(\'costs\',\'' + c.id + '\')">×</button></div>';
-    }).join('') + '</div>';
+    '<div class="c"><h3>Recent expenses</h3>' + (S.costs.slice(-5).reverse().map(function(c) {
+      return '<div class="l"><div><b>' + esc(c.descr) + '</b><small>' + esc(c.date) + '</small></div><b>' + gh(c.amt) + '</b><button class="s" onclick="del(\'costs\',\'' + esc(c.id) + '\')">×</button></div>';
+    }).join('') || '<small style="color:var(--mu)">No expenses yet.</small>') + '</div>';
   },
 
   prices: function() {
     return '<div class="c"><h2>Add farm price</h2><label>Farm<input id="n-f" placeholder="Farm A"></label><label>Egg size<input id="n-i" placeholder="Large"></label><div class="r"><label>Farm price<input id="n-b" type="number" inputmode="decimal"></label><label>Selling price<input id="n-s" type="number" inputmode="decimal"></label></div><button onclick="addPrice()">Add Price</button></div>' +
-    '<div class="c"><h2>Price list</h2>' + S.prices.map(function(p) {
-      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><b>' + esc(p.farm) + ' · ' + esc(p.item) + '</b><button class="s" onclick="delP(\'' + p.id + '\')">×</button></div><div class="r"><label>Farm<input type="number" inputmode="decimal" value="' + p.buy + '" onchange="upP(\'' + p.id + '\',\'buy\',this.value)"></label><label>Sell<input type="number" inputmode="decimal" value="' + p.sell + '" onchange="upP(\'' + p.id + '\',\'sell\',this.value)"></label></div></div>';
-    }).join('') + '</div>';
+    '<div class="c"><h2>Price list</h2>' + (S.prices.map(function(p) {
+      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><b>' + esc(p.farm) + ' · ' + esc(p.item) + '</b><button class="s" onclick="delP(\'' + esc(p.id) + '\')">×</button></div><div class="r"><label>Farm<input type="number" inputmode="decimal" value="' + p.buy + '" onchange="upP(\'' + esc(p.id) + '\',\'buy\',this.value)"></label><label>Sell<input type="number" inputmode="decimal" value="' + p.sell + '" onchange="upP(\'' + esc(p.id) + '\',\'sell\',this.value)"></label></div></div>';
+    }).join('') || '<small style="color:var(--mu)">No prices configured yet.</small>') + '</div>';
   }
 };
 
@@ -284,17 +338,20 @@ var V = {
    5. ACTIONS & HANDLERS
    ========================================== */
 function cp(t) {
-  var p = prod($('#c-p').value);
+  var sel = $('#c-p');
+  if (!sel) return;
+  var p = prod(sel.value);
   if (!p) return;
   if (!t) $('#c-b').value = p.buy;
   $('#c-tot').textContent = 'Total: ' + gh(num('#c-q') * num('#c-b'));
 }
 
 function sp(t) {
-  var p = prod($('#s-p').value);
+  var sel = $('#s-p');
+  if (!sel) return;
+  var p = prod(sel.value);
   if (!p) return;
-  var pr = $('#s-pr');
-  if (!t) pr.value = p.sell;
+  if (!t) $('#s-pr').value = p.sell;
   var tot = num('#s-q') * num('#s-pr'), m = $('#s-m').value;
   $('#s-pt').hidden = m != 'p';
   $('#s-du').hidden = m == 'f';
@@ -302,13 +359,14 @@ function sp(t) {
 }
 
 function addCol() {
-  var p = prod($('#c-p').value), q = num('#c-q');
-  if (!p || q <= 0) return toast('Enter crates');
+  var p = prod($('#c-p').value), q = num('#c-q'), b = num('#c-b');
+  if (!p || q <= 0) return toast('Enter valid crates');
   var pd = $('#c-pd').checked;
-  var paidAmt = pd ? q * num('#c-b') : num('#c-pa');
-  S.col.push({ id: uid(), date: $('#c-d').value || td(), pid: p.id, lbl: p.farm + ' · ' + p.item, qty: q, buy: num('#c-b'), shop: $('#c-s').value, paid_amt: paidAmt });
+  var paidAmt = pd ? q * b : Math.min(num('#c-pa'), q * b);
+  var dateVal = $('#c-d').value || td();
+  S.col.push({ id: uid(), date: dateVal, pid: p.id, lbl: p.farm + ' · ' + p.item, qty: q, buy: b, shop: $('#c-s').value, paid_amt: paidAmt });
   var t = num('#c-t');
-  if (t > 0) S.costs.push({ id: uid(), date: $('#c-d').value || td(), descr: 'Transport: ' + p.farm, amt: t });
+  if (t > 0) S.costs.push({ id: uid(), date: dateVal, descr: 'Transport: ' + p.farm, amt: t });
   save(); toast('Saved collection'); render();
 }
 
@@ -319,22 +377,36 @@ function addSale() {
   var paid = m == 'f' ? tot : m == 'c' ? 0 : Math.min(num('#s-a'), tot);
   var custInput = $('#s-c').value.trim();
   var custObj = S.customers.find(function(c) { return c.name.toLowerCase() === custInput.toLowerCase(); });
-  if (m != 'f' && paid < tot && !custObj) return toast('Select or save customer for credit');
-  
-  S.sales.push({ id: uid(), date: $('#s-d').value || td(), pid: p.id, lbl: p.farm + ' · ' + p.item, qty: q, price: pr, shop: $('#s-s').value, cust_id: custObj ? custObj.id : null, paid: paid, method: $('#s-paym').value, due: paid < tot ? plus(+$('#s-dd').value) : '' });
+  if (m != 'f' && paid < tot && !custObj) return toast('Select an existing customer from the Credit tab first');
+
+  S.sales.push({
+    id: uid(),
+    date: $('#s-d').value || td(),
+    pid: p.id,
+    lbl: p.farm + ' · ' + p.item,
+    qty: q,
+    price: pr,
+    shop: $('#s-s').value,
+    cust_id: custObj ? custObj.id : null,
+    paid: paid,
+    method: $('#s-paym').value,
+    due: paid < tot ? plus(+$('#s-dd').value) : ''
+  });
   save(); toast('Saved sale'); render();
 }
 
 function addCustomer() {
   var name = $('#cu-n').value.trim(), phone = $('#cu-p').value.trim();
-  if (!name) return toast('Enter name');
+  if (!name) return toast('Enter customer name');
+  var exists = S.customers.some(function(c) { return c.name.toLowerCase() === name.toLowerCase(); });
+  if (exists) return toast('Customer already exists');
   S.customers.push({ id: uid(), name: name, phone: phone });
   save(); toast('Saved customer'); render();
 }
 
 function pay(custId, i) {
   var a = num('#pa' + i);
-  if (a <= 0) return toast('Enter amount');
+  if (a <= 0) return toast('Enter valid amount');
   S.pay.push({ id: uid(), date: td(), cust_id: custId, amt: a });
   save(); toast('Recorded payment'); render();
 }
@@ -348,13 +420,14 @@ function addCost() {
 
 function addPrice() {
   var f = $('#n-f').value.trim(), i = $('#n-i').value.trim();
-  if (!f || !i) return toast('Enter details');
-  S.prices.push({ id: uid(), farm: f, item: i, buy: num('#n-b'), sell: num('#n-s'), hist: [] });
+  if (!f || !i) return toast('Enter farm and egg size');
+  S.prices.push({ id: uid(), farm: f, item: i, buy: num('#n-b'), sell: num('#n-s') });
   save(); toast('Added price'); render();
 }
 
 function upP(id, f, v) {
   var p = prod(id);
+  if (!p) return;
   p[f] = parseFloat(v) || 0;
   save();
 }
@@ -390,38 +463,62 @@ function render() {
 }
 
 function backup() {
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([JSON.stringify(S, null, 1)], { type: 'application/json' }));
-  a.download = 'afa-backup-' + td() + '.json';
-  a.click();
+  downloadFile(JSON.stringify(S, null, 2), 'application/json', 'afa-backup-' + td() + '.json');
 }
 
 function exportCSV() {
-  var csv = 'Date,Type,Details,Amount\n';
-  S.sales.forEach(function(s) { csv += s.date + ',Sale,"' + s.lbl + '",' + (s.qty * s.price) + '\n'; });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download = 'afa-sales-' + td() + '.csv';
-  a.click();
+  var csvCell = function(v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
+  var csv = 'Date,Type,Shop,Details,Qty,UnitPrice,Total,Paid\n';
+  S.sales.forEach(function(s) {
+    csv += [s.date, 'Sale', csvCell(s.shop), csvCell(s.lbl), s.qty, s.price, s.qty * s.price, s.paid].join(',') + '\n';
+  });
+  S.col.forEach(function(c) {
+    csv += [c.date, 'Collection', csvCell(c.shop), csvCell(c.lbl), c.qty, c.buy, c.qty * c.buy, c.paid_amt || 0].join(',') + '\n';
+  });
+  S.costs.forEach(function(x) {
+    csv += [x.date, 'Expense', '', csvCell(x.descr), 1, x.amt, x.amt, x.amt].join(',') + '\n';
+  });
+  downloadFile(csv, 'text/csv;charset=utf-8;', 'afa-records-' + td() + '.csv');
 }
 
 function loginView() {
   var nv = $('#nv');
   var m = $('#m');
+  setSyncStatus('', '');
+  $('#wk').textContent = 'Sign in to continue';
   if (nv) nv.innerHTML = '';
   if (m) {
-    m.innerHTML = '<div class="c"><h2>Sign in</h2><label>Email<input id="l-e" type="email" autocomplete="username"></label><label>Password<input id="l-p" type="password" autocomplete="current-password"></label><button onclick="login()">Sign in</button></div>';
+    m.innerHTML = '<form class="c" onsubmit="event.preventDefault();login()"><h2>Sign in</h2><label>Email<input id="l-e" type="email" required autocomplete="username"></label><label>Password<input id="l-p" type="password" required autocomplete="current-password"></label><button id="l-btn" type="submit">Sign in</button></form>';
   }
 }
 
 async function login() {
-  var r = await SB.auth.signInWithPassword({ email: $('#l-e').value.trim(), password: $('#l-p').value });
-  if (r.error) return toast('Wrong email or password');
-  await load(); render();
+  var email = $('#l-e').value.trim();
+  var password = $('#l-p').value;
+  if (!email || !password) return toast('Enter email and password');
+
+  var btn = $('#l-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
+
+  try {
+    var r = await SB.auth.signInWithPassword({ email: email, password: password });
+    if (r.error) {
+      console.error('Supabase Auth Error:', r.error);
+      if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; }
+      return toast(r.error.message || 'Wrong email or password');
+    }
+    await load();
+    render();
+  } catch (err) {
+    console.error('Login exception:', err);
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; }
+    toast(err.message || 'Network error while signing in');
+  }
 }
 
 async function logout() {
   await SB.auth.signOut();
+  localStorage.removeItem('afa_cache');
   loginView();
 }
 
@@ -429,29 +526,24 @@ async function boot() {
   try {
     var savedTheme = localStorage.getItem('afa_theme');
     if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
-    
+
     if (typeof supabase === 'undefined') {
       throw new Error('Supabase library failed to load.');
     }
 
     SB = supabase.createClient(SB_URL, SB_KEY);
     var s = await SB.auth.getSession();
-    
+
     if (s.data && s.data.session) {
-      try {
-        await load();
-        render();
-      } catch (loadErr) {
-        console.error('Load failed, resetting to login:', loadErr);
-        await SB.auth.signOut();
-        loginView();
-      }
+      await load();
+      render();
     } else {
       loginView();
     }
   } catch (err) {
     console.error('Boot error:', err);
     loginView();
+    toast(err.message || 'Initialization error');
   }
 }
 
