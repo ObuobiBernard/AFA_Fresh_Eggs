@@ -2,7 +2,7 @@
    1. CONFIGURATION & APP STATE
    ========================================== */
 var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
-var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpdGFsdWN2b2Jva2prZG9nd2lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MzMyMzUsImV4cCI6MjEwNzQwOTIzNX0.bGJt2h-SVqzNCBjwfZMkvkXxn8f0S1sFTTj9CkBO96g'; // <-- Replace with your valid Supabase key
+var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpdGFsdWN2b2Jva2prZG9nd2lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MzMyMzUsImV4cCI6MjEwNzQwOTIzNX0.bGJt2h-SVqzNCBjwfZMkvkXxn8f0S1sFTTj9CkBO96g'; // <-- Keep your valid Supabase key here!
 var tab = 'home';
 var selDate = ''; // Selected date for viewing weekly dashboard history
 var SHOPS = ['Main Shop', 'Market Shop'];
@@ -90,7 +90,7 @@ async function save() {
   isSaving = false;
   if (failed) {
     setSyncStatus('offline', 'Not Saved');
-    toast('Save failed. Will retry when online.');
+    toast('Saved locally. Will sync when online.');
   } else {
     setSyncStatus('synced', 'Synced');
   }
@@ -136,13 +136,12 @@ var plus = function(days) {
   return localDateStr(d);
 };
 
-// Returns { start: 'YYYY-MM-DD' (Monday), end: 'YYYY-MM-DD' (Sunday) } for any given date string
 function wkRange(dateStr) {
   var x = parseDate(dateStr || selDate || td());
-  x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // Monday
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
   var start = localDateStr(x);
   var y = new Date(x);
-  y.setDate(y.getDate() + 6); // Sunday
+  y.setDate(y.getDate() + 6);
   var end = localDateStr(y);
   return { start: start, end: end };
 }
@@ -232,9 +231,15 @@ function debts() {
 
 function stock() {
   var m = {}, L = {};
-  S.col.forEach(function(c) { var k = c.shop + '|' + c.pid; m[k] = (m[k] || 0) + c.qty; L[c.pid] = c.lbl; });
-  S.sales.forEach(function(s) { var k = s.shop + '|' + s.pid; m[k] = (m[k] || 0) - s.qty; L[s.pid] = s.lbl; });
+  S.prices.forEach(function(p) { L[p.id] = p.farm + ' · ' + p.item; });
+  S.col.forEach(function(c) { var k = c.shop + '|' + c.pid; m[k] = (m[k] || 0) + c.qty; if (c.lbl) L[c.pid] = c.lbl; });
+  S.sales.forEach(function(s) { var k = s.shop + '|' + s.pid; m[k] = (m[k] || 0) - s.qty; if (s.lbl) L[s.pid] = s.lbl; });
   return { m: m, L: L };
+}
+
+function shopStockQty(shop, pid) {
+  var st = stock();
+  return Math.round((st.m[shop + '|' + pid] || 0) * 100) / 100;
 }
 
 function del(t, id) {
@@ -265,7 +270,7 @@ var V = {
         wEnd = rng.end,
         isCurrentWk = (w === wkRange(td()).start),
         sa = S.sales.filter(function(s) { return s.date >= w && s.date <= wEnd; }),
-        cols = S.col.filter(function(c) { return c.date >= w && c.date <= wEnd; }),
+        cols = S.col.filter(function(c) { return c.date >= w && c.date <= wEnd && c.qty > 0; }),
         pays = S.pay.filter(function(p) { return p.date >= w && p.date <= wEnd; }),
         csts = S.costs.filter(function(c) { return c.date >= w && c.date <= wEnd; }),
         rev = sum(sa, function(s) { return s.qty * s.price; }),
@@ -277,7 +282,7 @@ var V = {
         pf = cash - buy - tr,
         d = debts(),
         owed = sum(d, function(x) { return x.bal; }),
-        fo = sum(S.col.filter(function(c) { return (c.paid_amt || 0) < (c.qty * c.buy); }), function(c) { return (c.qty * c.buy) - (c.paid_amt || 0); }),
+        fo = sum(S.col.filter(function(c) { return c.qty > 0 && (c.paid_amt || 0) < (c.qty * c.buy); }), function(c) { return (c.qty * c.buy) - (c.paid_amt || 0); }),
         st = stock(),
         h = '';
 
@@ -313,8 +318,8 @@ var V = {
     h += '</div>';
 
     h += '<div class="dash-grid">';
-    h += '<div class="dash-tile"><span>Customers Owe You</span><b>' + gh(owed) + '</b></div>';
-    h += '<div class="dash-tile"><span>You Owe Farmers</span><b>' + gh(fo) + '</b></div>';
+    h += '<div class="dash-tile" onclick="go(\'credit\')" style="cursor:pointer"><span>Customers Owe You</span><b>' + gh(owed) + '</b></div>';
+    h += '<div class="dash-tile" onclick="go(\'collect\')" style="cursor:pointer"><span>You Owe Farmers</span><b>' + gh(fo) + '</b></div>';
     h += '</div>';
 
     // Weekly Sales History for Selected Week
@@ -344,59 +349,117 @@ var V = {
 
     // Current Live Shop Stock
     SHOPS.forEach(function(s) {
-      var rows = Object.keys(st.m).filter(function(k) { return k.split('|')[0] == s; }).map(function(k) {
-        var q = st.m[k], pid = k.split('|')[1];
-        return '<div class="l"><span>' + esc(st.L[pid]) + '</span><b class="' + (q < 0 ? 'n' : '') + '">' + q + ' crates</b></div>';
+      var rows = Object.keys(st.m).filter(function(k) { return k.split('|')[0] == s && Math.abs(st.m[k]) > 0.001; }).map(function(k) {
+        var q = Math.round(st.m[k] * 100) / 100, pid = k.split('|')[1];
+        return '<div class="l"><span>' + esc(st.L[pid] || 'Unknown Item') + '</span><b class="' + (q < 0 ? 'n' : '') + '">' + q + ' crates</b></div>';
       }).join('');
       h += '<div class="c"><h2>📦 ' + esc(s) + ' Current Stock</h2>' + (rows || '<small style="color:var(--mu)">No stock recorded.</small>') + '</div>';
     });
 
-    h += '<div class="c"><h3>System & Data</h3><div class="r"><button onclick="backup()">Download Backup</button><button onclick="exportCSV()">Export CSV</button></div><button onclick="logout()" style="background:var(--bd);color:var(--tx);margin-top:10px">Sign Out</button></div>';
+    h += '<div class="c"><h3>System & Data</h3>' +
+      '<div class="r" style="margin-bottom:10px;"><button onclick="backup()">Download Backup</button><button onclick=" exportCSV()">Export CSV</button></div>' +
+      '<label style="margin:0"><span class="btn-link" style="background:var(--bg);color:var(--tx);border:1px solid var(--bd);margin-bottom:10px;">📂 Restore Backup (.json)</span><input type="file" accept=".json" hidden onchange="restoreBackup(this)"></label>' +
+      '<button onclick="logout()" style="background:var(--bd);color:var(--tx);">Sign Out</button></div>';
 
     return h;
   },
 
   collect: function() {
     if (!S.prices.length) return noPrices();
+
+    // Unpaid Farmer Collections list (#1 Upgrade)
+    var unpaidCols = S.col.filter(function(c) { return c.qty > 0 && (c.qty * c.buy) - (c.paid_amt || 0) > 0.005; });
+    var unpaidHtml = unpaidCols.length ? '<div class="c"><h2>🌾 Unpaid Farm Pickups (' + unpaidCols.length + ')</h2>' +
+      unpaidCols.map(function(c, idx) {
+        var owed = (c.qty * c.buy) - (c.paid_amt || 0);
+        return '<div style="padding:10px 0;border-top:1px solid var(--bd)">' +
+          '<div class="l" style="border:0;padding:0"><div><b>' + esc(c.lbl) + '</b> · ' + c.qty + ' crates<small>' + esc(c.date) + ' · ' + esc(c.shop) + ' · Paid ' + gh(c.paid_amt || 0) + ' of ' + gh(c.qty * c.buy) + '</small></div>' +
+          '<b class="n">Owe ' + gh(owed) + '</b></div>' +
+          '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto">' +
+          '<input id="fpa' + idx + '" type="number" inputmode="decimal" value="' + Math.round(owed * 100) / 100 + '" placeholder="Amount" style="margin:0">' +
+          '<button onclick="payFarmer(\'' + esc(c.id) + '\',' + idx + ')" style="width:auto">Pay Farmer</button>' +
+          '</div></div>';
+      }).join('') + '</div>' : '';
+
+    // Stock Transfer / Breakage Card (#3 Upgrade)
+    var transferHtml = '<details class="c"><summary style="font-weight:600;cursor:pointer;">🔄 Transfer Stock or Record Breakage</summary>' +
+      '<div style="margin-top:12px;">' +
+      '<label>Action<select id="tr-type" onchange="$(\'#tr-to-wrap\').hidden = (this.value === \'loss\');"><option value="move">Transfer Between Shops</option><option value="loss">Record Broken / Spoiled Crates</option></select></label>' +
+      '<label>Farm · egg size<select id="tr-p">' + pOpts() + '</select></label>' +
+      '<div class="r"><label>From Shop<select id="tr-from">' + shopOpts() + '</select></label>' +
+      '<div id="tr-to-wrap"><label>To Shop<select id="tr-to">' + SHOPS.slice().reverse().map(function(s) { return '<option>' + esc(s) + '</option>'; }).join('') + '</select></label></div></div>' +
+      '<label>Crates<input id="tr-q" type="number" inputmode="decimal" placeholder="e.g. 5"></label>' +
+      '<button onclick="adjustStock()">Save Stock Adjustment</button>' +
+      '</div></details>';
+
     return '<div class="c"><h2>Farm collection</h2><label>Date<input type="date" id="c-d" value="' + td() + '"></label><label>Farm · egg size<select id="c-p" onchange="cp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="c-q" type="number" inputmode="decimal" oninput="cp(1)"></label><label>Farm price / crate<input id="c-b" type="number" inputmode="decimal" oninput="cp(1)"></label></div><label>Goes to<select id="c-s">' + shopOpts() + '</select></label><label>Transport cost<input id="c-t" type="number" inputmode="decimal"></label><label><input type="checkbox" id="c-pd" checked style="width:auto;margin-right:8px" onchange="$(\'#c-paid-amt\').hidden = this.checked;">Paid in full</label><div id="c-paid-amt" hidden><label>Amount paid now<input id="c-pa" type="number" inputmode="decimal"></label></div><div id="c-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addCol()">Save collection</button></div>' +
-    '<div class="c"><h3>Recent collections</h3>' + (S.col.slice(-5).reverse().map(function(c) {
-      var owed = c.qty * c.buy - (c.paid_amt || 0);
-      return '<div class="l"><div><b>' + esc(c.lbl) + '</b> · ' + c.qty + ' crates<small>' + esc(c.date) + ' · ' + esc(c.shop) + ' · ' + gh(c.qty * c.buy) + (owed <= 0 ? ' · Paid' : ' · Owe ' + gh(owed)) + '</small></div><button class="s" onclick="del(\'col\',\'' + esc(c.id) + '\')">×</button></div>';
-    }).join('') || '<small style="color:var(--mu)">No collections yet.</small>') + '</div>';
+      unpaidHtml +
+      transferHtml +
+      '<div class="c"><h3>Recent collections & adjustments</h3>' + (S.col.slice(-8).reverse().map(function(c) {
+        var owed = c.qty > 0 ? (c.qty * c.buy - (c.paid_amt || 0)) : 0;
+        return '<div class="l"><div><b>' + esc(c.lbl) + '</b> · ' + (c.qty > 0 ? '+' : '') + c.qty + ' crates<small>' + esc(c.date) + ' · ' + esc(c.shop) + (c.buy > 0 ? ' · ' + gh(c.qty * c.buy) + (owed <= 0.005 ? ' · Paid' : ' · Owe ' + gh(owed)) : ' · Stock adjustment') + '</small></div><button class="s" onclick="del(\'col\',\'' + esc(c.id) + '\')">×</button></div>';
+      }).join('') || '<small style="color:var(--mu)">No collections yet.</small>') + '</div>';
   },
 
   sell: function() {
     if (!S.prices.length) return noPrices();
     var cl = S.customers.map(function(c) { return '<option value="' + esc(c.name) + '"></option>'; }).join('');
-    return '<div class="c"><h2>New sale</h2><datalist id="cl">' + cl + '</datalist><div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label><label>Shop<select id="s-s">' + shopOpts() + '</select></label></div><label>Farm · egg size<select id="s-p" onchange="sp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="s-q" type="number" inputmode="decimal" oninput="sp(1)"></label><label>Price / crate<input id="s-pr" type="number" inputmode="decimal" oninput="sp(1)"></label></div><label>Customer<input id="s-c" list="cl" placeholder="Customer name (or Walk-in)"></label><label>Payment Method<select id="s-paym"><option>Cash</option><option>Mobile Money</option></select></label><label>Payment Status<select id="s-m" onchange="sp(1)"><option value="f">Paid in full</option><option value="p">Part paid</option><option value="c">On credit</option></select></label><div id="s-pt" hidden><label>Amount paid now<input id="s-a" type="number" inputmode="decimal"></label></div><div id="s-du" hidden><label>Due within<select id="s-dd"><option value="7">1 week</option><option value="14">2 weeks</option><option value="30">1 month</option></select></label></div><div id="s-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addSale()">Save sale</button></div>' +
-    '<div class="c"><h3>Recent Sales & Receipts</h3>' +
-    (S.sales.slice(-5).reverse().map(function(s) {
-      var custObj = cust(s.cust_id);
-      var phone = custObj ? custObj.phone : '';
-      var total = s.qty * s.price;
-      var dueAmt = total - s.paid;
-      var msg = encodeURIComponent('*AFA FRESH EGGS*\nDate: ' + s.date + '\nItem: ' + s.lbl + '\nQty: ' + s.qty + ' crates\nTotal: ' + gh(total) + '\nPaid: ' + gh(s.paid) + (dueAmt > 0 ? '\nBalance Due: ' + gh(dueAmt) : '\nStatus: PAID'));
-      var waBtn = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + msg + '" target="_blank" rel="noopener">💬 Receipt</a>' : '';
-      return '<div class="l"><div><b>' + esc(s.lbl) + '</b> · ' + s.qty + ' × ' + gh(s.price) + '<small>' + esc(s.date) + ' · ' + esc(custObj ? custObj.name : 'Walk-in') + '</small>' + waBtn + '</div><button class="s" onclick="del(\'sales\',\'' + esc(s.id) + '\')">×</button></div>';
-    }).join('') || '<small style="color:var(--mu)">No sales yet.</small>') + '</div>';
+    return '<div class="c"><h2>New sale</h2><datalist id="cl">' + cl + '</datalist>' +
+      '<div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label><label>Shop<select id="s-s" onchange="sp(1)">' + shopOpts() + '</select></label></div>' +
+      '<label>Farm · egg size<select id="s-p" onchange="sp()">' + pOpts() + '</select></label>' +
+      '<div id="s-stk" style="font-size:13px;margin:-4px 0 10px;font-weight:600;"></div>' +
+      '<div class="r"><label>Crates<input id="s-q" type="number" inputmode="decimal" oninput="sp(1)"></label><label>Price / crate<input id="s-pr" type="number" inputmode="decimal" oninput="sp(1)"></label></div>' +
+      '<div class="r"><label>Customer<input id="s-c" list="cl" oninput="checkNewCust()" placeholder="Name (or Walk-in)"></label><label id="s-cp-wrap" hidden>New Customer Phone<input id="s-cp" type="tel" placeholder="024..."></label></div>' +
+      '<label>Payment Method<select id="s-paym"><option>Cash</option><option>Mobile Money</option></select></label>' +
+      '<label>Payment Status<select id="s-m" onchange="sp(1)"><option value="f">Paid in full</option><option value="p">Part paid</option><option value="c">On credit</option></select></label>' +
+      '<div id="s-pt" hidden><label>Amount paid now<input id="s-a" type="number" inputmode="decimal"></label></div>' +
+      '<div id="s-du" hidden><label>Due within<select id="s-dd"><option value="7">1 week</option><option value="14">2 weeks</option><option value="30">1 month</option></select></label></div>' +
+      '<div id="s-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addSale()">Save sale</button></div>' +
+      '<div class="c"><h3>Recent Sales & Receipts</h3>' +
+      (S.sales.slice(-8).reverse().map(function(s) {
+        var custObj = cust(s.cust_id);
+        var phone = custObj ? custObj.phone : '';
+        var total = s.qty * s.price;
+        var dueAmt = total - s.paid;
+        var msg = encodeURIComponent('*AFA FRESH EGGS*\nDate: ' + s.date + '\nItem: ' + s.lbl + '\nQty: ' + s.qty + ' crates\nTotal: ' + gh(total) + '\nPaid: ' + gh(s.paid) + (dueAmt > 0 ? '\nBalance Due: ' + gh(dueAmt) : '\nStatus: PAID'));
+        var waBtn = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + msg + '" target="_blank" rel="noopener">💬 Receipt</a>' : '';
+        return '<div class="l"><div><b>' + esc(s.lbl) + '</b> · ' + s.qty + ' × ' + gh(s.price) + '<small>' + esc(s.date) + ' · ' + esc(s.shop) + ' · ' + esc(custObj ? custObj.name : 'Walk-in') + (dueAmt > 0 ? ' · <span class="n">Due ' + gh(dueAmt) + '</span>' : '') + '</small>' + waBtn + '</div><button class="s" onclick="del(\'sales\',\'' + esc(s.id) + '\')">×</button></div>';
+      }).join('') || '<small style="color:var(--mu)">No sales yet.</small>') + '</div>';
   },
 
   credit: function() {
     var d = debts(), h = '<div class="c"><h2>Customer Credit & Directory</h2>';
     h += '<div style="margin-bottom:14px"><input id="cu-n" placeholder="New customer name" style="margin-bottom:8px"><input id="cu-p" type="tel" placeholder="Phone number" style="margin-bottom:8px"><button onclick="addCustomer()">Add Customer</button></div>';
+    h += '<h3>Outstanding Customer Balances (' + d.length + ')</h3>';
     h += d.map(function(x, i) {
       var custObj = cust(x.id);
       var phone = custObj ? custObj.phone : '';
       var waMsg = encodeURIComponent('Hello ' + x.name + ', friendly reminder from AFA Fresh Eggs for your balance of ' + gh(x.bal) + '. Thank you!');
       var waLink = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + waMsg + '" target="_blank" rel="noopener">💬 WhatsApp Reminder</a>' : '';
-      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>' + esc(x.name) + '</b><small>📞 ' + esc(phone || 'None') + (x.due ? ' · Due ' + esc(x.due) : '') + '</small></div><div style="text-align:right"><b>' + gh(x.bal) + '</b></div></div>' + waLink + '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa' + i + '" type="number" inputmode="decimal" placeholder="Amount" style="margin:0"><button onclick="pay(\'' + esc(x.id) + '\', ' + i + ')" style="width:auto">Record Payment</button></div></div>';
+      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>' + esc(x.name) + '</b><small>📞 ' + esc(phone || 'None') + (x.due ? ' · Due ' + esc(x.due) : '') + '</small></div><div style="text-align:right"><b class="n">' + gh(x.bal) + '</b></div></div>' + waLink + '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa' + i + '" type="number" inputmode="decimal" placeholder="Amount" style="margin:0"><button onclick="pay(\'' + esc(x.id) + '\', ' + i + ')" style="width:auto">Record Payment</button></div></div>';
     }).join('') || '<small style="color:var(--mu)">No outstanding debts.</small>';
-    return h + '</div>';
+    h += '</div>';
+
+    // Recent Debt Payments History (#2 Upgrade)
+    h += '<div class="c"><h3>Recent Debt Payments</h3>' +
+      (S.pay.slice(-8).reverse().map(function(p) {
+        var cObj = cust(p.cust_id);
+        return '<div class="l"><div><b>' + esc(cObj ? cObj.name : 'Customer') + '</b><small>' + esc(p.date) + '</small></div><b>' + gh(p.amt) + '</b><button class="s" onclick="del(\'pay\',\'' + esc(p.id) + '\')">×</button></div>';
+      }).join('') || '<small style="color:var(--mu)">No debt payments recorded yet.</small>') + '</div>';
+
+    // Full Customer Directory (#2 Upgrade)
+    h += '<details class="c"><summary style="font-weight:600;cursor:pointer;">👥 All Customers Directory (' + S.customers.length + ')</summary><div style="margin-top:10px;">' +
+      (S.customers.map(function(c) {
+        var wa = c.phone ? '<a class="btn-link btn-wa" style="padding:4px 10px;font-size:12px;width:auto;min-height:auto;" href="https://wa.me/' + formatPhone(c.phone) + '" target="_blank" rel="noopener">💬 Chat</a>' : '';
+        return '<div class="l"><div><b>' + esc(c.name) + '</b><small>📞 ' + esc(c.phone || 'No phone') + '</small></div><div style="display:flex;align-items:center;gap:6px;">' + wa + '<button class="s" onclick="del(\'customers\',\'' + esc(c.id) + '\')">×</button></div></div>';
+      }).join('') || '<small style="color:var(--mu)">No customers saved yet.</small>') + '</div></details>';
+
+    return h;
   },
 
   costs: function() {
     return '<div class="c"><h2>Add expense / transport</h2><div class="r"><label>Date<input type="date" id="x-d" value="' + td() + '"></label><label>Amount<input id="x-a" type="number" inputmode="decimal"></label></div><label>Description<input id="x-n" placeholder="e.g. Fuel"></label><button onclick="addCost()">Save Expense</button></div>' +
-    '<div class="c"><h3>Recent expenses</h3>' + (S.costs.slice(-5).reverse().map(function(c) {
+    '<div class="c"><h3>Recent expenses</h3>' + (S.costs.slice(-8).reverse().map(function(c) {
       return '<div class="l"><div><b>' + esc(c.descr) + '</b><small>' + esc(c.date) + '</small></div><b>' + gh(c.amt) + '</b><button class="s" onclick="del(\'costs\',\'' + esc(c.id) + '\')">×</button></div>';
     }).join('') || '<small style="color:var(--mu)">No expenses yet.</small>') + '</div>';
   },
@@ -427,10 +490,31 @@ function sp(t) {
   var p = prod(sel.value);
   if (!p) return;
   if (!t) $('#s-pr').value = p.sell;
-  var tot = num('#s-q') * num('#s-pr'), m = $('#s-m').value;
+  var shop = $('#s-s').value;
+  var avail = shopStockQty(shop, p.id);
+  var q = num('#s-q');
+  var stkEl = $('#s-stk');
+  if (stkEl) {
+    var over = q > avail;
+    stkEl.className = over ? 'n' : '';
+    stkEl.textContent = '📦 Available in ' + shop + ': ' + avail + ' crates' + (over ? ' (Exceeds current stock!)' : '');
+  }
+  var tot = q * num('#s-pr'), m = $('#s-m').value;
   $('#s-pt').hidden = m != 'p';
   $('#s-du').hidden = m == 'f';
   $('#s-tot').textContent = 'Total: ' + gh(tot);
+}
+
+function checkNewCust() {
+  var val = ($('#s-c').value || '').trim();
+  var wrap = $('#s-cp-wrap');
+  if (!wrap) return;
+  if (!val) {
+    wrap.hidden = true;
+    return;
+  }
+  var exists = S.customers.some(function(c) { return c.name.toLowerCase() === val.toLowerCase(); });
+  wrap.hidden = exists;
 }
 
 function addCol() {
@@ -445,6 +529,41 @@ function addCol() {
   save(); toast('Saved collection'); render();
 }
 
+function payFarmer(colId, idx) {
+  var c = S.col.find(function(x) { return x.id == colId; });
+  if (!c) return;
+  var amt = num('#fpa' + idx);
+  if (amt <= 0) return toast('Enter valid payment amount');
+  var totalCost = c.qty * c.buy;
+  c.paid_amt = Math.min(totalCost, (c.paid_amt || 0) + amt);
+  save();
+  toast('Farmer payment recorded');
+  render();
+}
+
+function adjustStock() {
+  var type = $('#tr-type').value;
+  var p = prod($('#tr-p').value);
+  var fromShop = $('#tr-from').value;
+  var toShop = $('#tr-to').value;
+  var q = num('#tr-q');
+  if (!p || q <= 0) return toast('Enter valid crates');
+  if (type === 'move' && fromShop === toShop) return toast('Select different From and To shops');
+
+  var dateVal = td();
+  var label = p.farm + ' · ' + p.item;
+  // Deduct from source shop with buy: 0 so financial purchase metrics aren't distorted
+  S.col.push({ id: uid(), date: dateVal, pid: p.id, lbl: label, qty: -q, buy: 0, shop: fromShop, paid_amt: 0 });
+  if (type === 'move') {
+    S.col.push({ id: uid(), date: dateVal, pid: p.id, lbl: label, qty: q, buy: 0, shop: toShop, paid_amt: 0 });
+    toast('Transferred ' + q + ' crates to ' + toShop);
+  } else {
+    toast('Recorded ' + q + ' broken/spoiled crates');
+  }
+  save();
+  render();
+}
+
 function addSale() {
   var p = prod($('#s-p').value), q = num('#s-q'), pr = num('#s-pr');
   if (!p || q <= 0 || pr <= 0) return toast('Enter crates and price');
@@ -452,7 +571,17 @@ function addSale() {
   var paid = m == 'f' ? tot : m == 'c' ? 0 : Math.min(num('#s-a'), tot);
   var custInput = $('#s-c').value.trim();
   var custObj = S.customers.find(function(c) { return c.name.toLowerCase() === custInput.toLowerCase(); });
-  if (m != 'f' && paid < tot && !custObj) return toast('Select an existing customer from the Credit tab first');
+
+  if (m != 'f' && paid < tot && !custInput) {
+    return toast('Enter customer name for credit sale');
+  }
+
+  // Auto-create customer on the fly if a name was typed that isn't in S.customers yet (#4 Upgrade)
+  if (custInput && !custObj) {
+    var newPhone = ($('#s-cp') ? $('#s-cp').value : '').trim();
+    custObj = { id: uid(), name: custInput, phone: newPhone };
+    S.customers.push(custObj);
+  }
 
   S.sales.push({
     id: uid(),
@@ -542,6 +671,30 @@ function backup() {
   downloadFile(JSON.stringify(S, null, 2), 'application/json', 'afa-backup-' + td() + '.json');
 }
 
+function restoreBackup(input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  if (!confirm('Restore data from backup? This will merge/update records in your database.')) {
+    input.value = '';
+    return;
+  }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      var data = JSON.parse(e.target.result);
+      for (var k in TB) {
+        if (Array.isArray(data[k])) S[k] = data[k];
+      }
+      save();
+      render();
+      toast('Backup restored & syncing!');
+    } catch (err) {
+      toast('Invalid backup JSON file');
+    }
+  };
+  reader.readAsText(file);
+}
+
 function exportCSV() {
   var csvCell = function(v) { return '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"'; };
   var csv = 'Date,Type,Shop,Details,Qty,UnitPrice,Total,Paid\n';
@@ -549,7 +702,7 @@ function exportCSV() {
     csv += [s.date, 'Sale', csvCell(s.shop), csvCell(s.lbl), s.qty, s.price, s.qty * s.price, s.paid].join(',') + '\n';
   });
   S.col.forEach(function(c) {
-    csv += [c.date, 'Collection', csvCell(c.shop), csvCell(c.lbl), c.qty, c.buy, c.qty * c.buy, c.paid_amt || 0].join(',') + '\n';
+    csv += [c.date, c.buy > 0 ? 'Collection' : 'Stock Adjustment', csvCell(c.shop), csvCell(c.lbl), c.qty, c.buy, c.qty * c.buy, c.paid_amt || 0].join(',') + '\n';
   });
   S.costs.forEach(function(x) {
     csv += [x.date, 'Expense', '', csvCell(x.descr), 1, x.amt, x.amt, x.amt].join(',') + '\n';
