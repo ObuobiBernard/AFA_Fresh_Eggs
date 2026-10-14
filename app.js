@@ -1,13 +1,71 @@
 /* ==========================================
+   0. ROLES & PERMISSIONS
+   ========================================== */
+var ROLE_LABELS = {
+  ceo: 'CEO',
+  data_entry: 'Data Entry',
+  attendant: 'Shop Attendant',
+  driver: 'Driver',
+  pending: 'Pending Approval'
+};
+
+// Single source of truth for what each role may do.
+// RLS in supabase-rbac.sql is the hard boundary; this drives the UI.
+var PERMS = {
+  ceo:        { viewShops: ['Main Shop', 'Market Shop'], sell: 1, collect: 1, pay: 1, customer: 1, cost: 1, prices: 1, transfer: 1, del: 1, delOwn: 1, backup: 1, export: 1, team: 1, home: 1 },
+  data_entry: { viewShops: ['Main Shop', 'Market Shop'], sell: 1, collect: 1, pay: 1, customer: 1, cost: 1, prices: 1, transfer: 1, del: 0, delOwn: 0, backup: 0, export: 0, team: 0, home: 1 },
+  attendant:  { sell: 1, collect: 0, pay: 1, customer: 1, cost: 0, prices: 0, transfer: 0, del: 0, delOwn: 1, backup: 0, export: 0, team: 0, home: 1 },
+  driver:     { viewShops: ['Main Shop', 'Market Shop'], sell: 0, collect: 1, pay: 0, customer: 0, cost: 1, prices: 0, transfer: 0, del: 0, delOwn: 0, backup: 0, export: 0, team: 0, home: 1 },
+  pending:    { sell: 0, collect: 0, pay: 0, customer: 0, cost: 0, prices: 0, transfer: 0, del: 0, delOwn: 0, backup: 0, export: 0, team: 0, home: 0 }
+};
+
+// The signed-in user's own record
+var ME = { id: '', email: '', name: '', phone: '', role: 'pending', shop: '', active: false };
+
+function can(k) {
+  return !!(PERMS[ME.role] && PERMS[ME.role][k]);
+}
+// Attendants are locked to their own shop; everyone else sees every shop
+function myShop() {
+  return (ME.role === 'attendant') ? ME.shop : '';
+}
+function shopsFor() {
+  if (PERMS[ME.role] && PERMS[ME.role].viewShops) return PERMS[ME.role].viewShops;
+  return ME.shop ? [ME.shop] : SHOPS;
+}
+// Narrows a record list to what this user is allowed to see
+function scopeRows(rows) {
+  var s = myShop();
+  if (!s) return rows;
+  return rows.filter(function(r) { return r.shop === s; });
+}
+
+// Can this user delete THIS specific row?
+// CEO deletes anything; an attendant may delete only sales they recorded.
+function mayDel(t, row) {
+  if (can('del')) return true;
+  return !!(can('delOwn') && t === 'sales' && row && row.created_by === ME.id);
+}
+
+// Friendly wall for a tab the signed-in role cannot use
+function noAccess(what) {
+  return '<div class="c"><h2>🔒 ' + esc(what || 'This section') + '</h2>' +
+    '<p style="color:var(--mu);font-size:14px;margin:0 0 4px">Your role (<b>' + esc(ROLE_LABELS[ME.role] || ME.role) + '</b>) does not include access to this screen.</p>' +
+    '<p style="color:var(--mu);font-size:14px;margin:0">Ask the CEO to adjust your permissions if you need it.</p></div>';
+}
+
+/* ==========================================
    1. CONFIGURATION & APP STATE
    ========================================== */
 var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
-var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpdGFsdWN2b2Jva2prZG9nd2lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MzMyMzUsImV4cCI6MjEwNzQwOTIzNX0.bGJt2h-SVqzNCBjwfZMkvkXxn8f0S1sFTTj9CkBO96g'; // <-- Keep your valid Supabase key here!
+var SB_KEY = 'PASTE_YOUR_WORKING_SUPABASE_KEY_HERE'; // <-- Keep your valid Supabase key here!
 var tab = 'home';
 var selDate = ''; // Selected date for viewing weekly dashboard history
 var SHOPS = ['Main Shop', 'Market Shop'];
-var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
+var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [], profiles: [] };
 var snap = {};
+// profiles is intentionally NOT synced through save(): RLS only lets a user
+// update their own name/phone, and role changes go through set_member().
 var TB = { prices: 'prices', col: 'collections', sales: 'sales', pay: 'payments', costs: 'costs', customers: 'customers' };
 var SB;
 var isSaving = false;
@@ -16,6 +74,45 @@ var saveQueued = false;
 /* ==========================================
    2. DATABASE SYNC & QUEUE HANDLERS
    ========================================== */
+
+// Loads the signed-in user's own profile (role, shop, active flag)
+async function loadMe() {
+  ME = { id: '', email: '', name: '', phone: '', role: 'pending', shop: '', active: false };
+  try {
+    var u = await SB.auth.getUser();
+    var usr = u && u.data && u.data.user;
+    if (!usr) return ME;
+    ME.id = usr.id;
+    ME.email = usr.email || '';
+    ME.name = (usr.user_metadata && usr.user_metadata.name) || '';
+    ME.phone = (usr.user_metadata && usr.user_metadata.phone) || '';
+    var r = await SB.from('profiles').select('*').eq('id', usr.id).maybeSingle();
+    if (r.error) throw r.error;
+    if (r.data) {
+      ME.role = r.data.role || 'pending';
+      ME.shop = r.data.shop || '';
+      ME.active = !!r.data.active;
+      ME.name = r.data.name || ME.name;
+      ME.phone = r.data.phone || ME.phone;
+    }
+  } catch (err) {
+    console.error('loadMe failed:', err);
+  }
+  return ME;
+}
+
+// Staff directory — CEO only (RLS hides it from everyone else, so this stays empty)
+async function loadTeam() {
+  S.profiles = [];
+  if (ME.role !== 'ceo') return;
+  try {
+    var r = await SB.from('profiles').select('*').order('created_at', { ascending: true });
+    if (!r.error && r.data) S.profiles = r.data;
+  } catch (err) {
+    console.error('loadTeam failed:', err);
+  }
+}
+
 async function load() {
   setSyncStatus('saving', 'Loading...');
   var hadError = false;
@@ -235,8 +332,8 @@ function debts() {
 function stock() {
   var m = {}, L = {};
   S.prices.forEach(function(p) { L[p.id] = p.farm + ' · ' + p.item; });
-  S.col.forEach(function(c) { var k = c.shop + '|' + c.pid; m[k] = (m[k] || 0) + c.qty; if (c.lbl) L[c.pid] = c.lbl; });
-  S.sales.forEach(function(s) { var k = s.shop + '|' + s.pid; m[k] = (m[k] || 0) - s.qty; if (s.lbl) L[s.pid] = s.lbl; });
+  scopeRows(S.col).forEach(function(c) { var k = c.shop + '|' + c.pid; m[k] = (m[k] || 0) + c.qty; if (c.lbl) L[c.pid] = c.lbl; });
+  scopeRows(S.sales).forEach(function(s) { var k = s.shop + '|' + s.pid; m[k] = (m[k] || 0) - s.qty; if (s.lbl) L[s.pid] = s.lbl; });
   return { m: m, L: L };
 }
 
@@ -246,6 +343,10 @@ function shopStockQty(shop, pid) {
 }
 
 function del(t, id) {
+  var row = S[t].find(function(x) { return x.id == id; });
+  if (!row) return;
+  // single source of truth for delete rights (see mayDel)
+  if (!mayDel(t, row)) return toast('You do not have permission to delete this');
   if (!confirm('Delete this entry?')) return;
   S[t] = S[t].filter(function(x) { return x.id != id; });
   save();
@@ -273,10 +374,10 @@ var V = {
         w = rng.start,
         wEnd = rng.end,
         isCurrentWk = (w === wkRange(td()).start),
-        sa = S.sales.filter(function(s) { return s.date >= w && s.date <= wEnd; }),
-        cols = S.col.filter(function(c) { return c.date >= w && c.date <= wEnd && c.qty > 0; }),
-        pays = S.pay.filter(function(p) { return p.date >= w && p.date <= wEnd; }),
-        csts = S.costs.filter(function(c) { return c.date >= w && c.date <= wEnd; }),
+        sa = scopeRows(S.sales).filter(function(s) { return s.date >= w && s.date <= wEnd; }),
+        cols = scopeRows(S.col).filter(function(c) { return c.date >= w && c.date <= wEnd && c.qty > 0; }),
+        pays = scopeRows(S.pay).filter(function(p) { return p.date >= w && p.date <= wEnd; }),
+        csts = scopeRows(S.costs).filter(function(c) { return c.date >= w && c.date <= wEnd; }),
         rev = sum(sa, function(s) { return s.qty * s.price; }),
         cratesSold = sum(sa, function(s) { return s.qty; }),
         cratesPicked = sum(cols, function(c) { return c.qty; }),
@@ -286,9 +387,15 @@ var V = {
         pf = cash - buy - tr,
         d = debts(),
         owed = sum(d, function(x) { return x.bal; }),
-        fo = sum(S.col.filter(function(c) { return c.qty > 0 && (c.paid_amt || 0) < (c.qty * c.buy); }), function(c) { return (c.qty * c.buy) - (c.paid_amt || 0); }),
+        fo = sum(scopeRows(S.col).filter(function(c) { return c.qty > 0 && (c.paid_amt || 0) < (c.qty * c.buy); }), function(c) { return (c.qty * c.buy) - (c.paid_amt || 0); }),
         st = stock(),
         h = '';
+
+    // Who am I + role badge
+    h += '<div class="c" style="display:flex;justify-content:space-between;align-items:center;gap:10px;">';
+    h += '<div><b>' + esc(ME.name || ME.email || 'User') + '</b><small style="display:block;color:var(--mu)">' + esc(ROLE_LABELS[ME.role] || ME.role) + (myShop() ? ' · ' + esc(ME.shop) : ' · All shops') + '</small></div>';
+    if (myShop()) h += '<span class="sync-pill" style="background:var(--gb,#e5f4e8);color:var(--g);flex:none">' + esc(ME.shop) + '</span>';
+    h += '</div>';
 
     // Week picker — jump to any past or future week
     h += '<div class="c">';
@@ -352,8 +459,8 @@ var V = {
     h += '<div class="c"><h2>🚚 Farm Pickups in Selected Week (' + cols.length + ')</h2>' +
       (colRows || '<small style="color:var(--mu)">No farm pickups recorded for ' + esc(w) + ' – ' + esc(wEnd) + '.</small>') + '</div>';
 
-    // Live stock per shop
-    SHOPS.forEach(function(s) {
+    // Live stock per shop (only the shops this user may see)
+    shopsFor().forEach(function(s) {
       var rows = Object.keys(st.m).filter(function(k) { return k.split('|')[0] == s && Math.abs(st.m[k]) > 0.001; }).map(function(k) {
         var q = Math.round(st.m[k] * 100) / 100, pid = k.split('|')[1];
         return '<div class="l"><span>' + esc(st.L[pid] || 'Unknown Item') + '</span><b class="' + (q < 0 ? 'n' : '') + '">' + q + ' crates</b></div>';
@@ -361,10 +468,15 @@ var V = {
       h += '<div class="c"><h2>📦 ' + esc(s) + ' Current Stock</h2>' + (rows || '<small style="color:var(--mu)">No stock recorded.</small>') + '</div>';
     });
 
-    h += '<div class="c"><h3>System & Data</h3>' +
-      '<div class="r" style="margin-bottom:10px;"><button onclick="backup()">Download Backup</button><button onclick="exportCSV()">Export CSV</button></div>' +
-      '<label class="pick" style="margin:0"><span class="btn-link" style="background:var(--bg);color:var(--tx);border:1px solid var(--bd);margin-bottom:10px;">📂 Restore Backup (.json)</span><input type="file" accept=".json" hidden onchange="restoreBackup(this)"></label>' +
-      '<button onclick="logout()" style="background:var(--bd);color:var(--tx);">Sign Out</button></div>';
+    // System & Data — only for roles allowed to back up / export
+    if (can('backup') || can('export')) {
+      h += '<div class="c"><h3>System & Data</h3>' +
+        (can('backup') ? '<div class="r" style="margin-bottom:10px;"><button onclick="backup()">Download Backup</button><button onclick="exportCSV()">Export CSV</button></div>' +
+        '<label class="pick" style="margin:0"><span class="btn-link" style="background:var(--bg);color:var(--tx);border:1px solid var(--bd);margin-bottom:10px;">📂 Restore Backup (.json)</span><input type="file" accept=".json" hidden onchange="restoreBackup(this)"></label>' : '') +
+        '<button onclick="logout()" style="background:var(--bd);color:var(--tx);">Sign Out</button></div>';
+    } else {
+      h += '<div class="c"><button onclick="logout()" style="background:var(--bd);color:var(--tx);">Sign Out</button></div>';
+    }
 
     return h;
   },
@@ -372,14 +484,15 @@ var V = {
 
   collect: function() {
     if (!S.prices.length) return noPrices();
+    if (!can('collect')) return noAccess('Farm collection');
 
     // Unpaid farm pickups with a "Pay Farmer" action (#1)
-    var unpaidCols = S.col.filter(function(c) { return c.qty > 0 && (c.qty * c.buy) - (c.paid_amt || 0) > 0.005; });
+    var unpaidCols = scopeRows(S.col).filter(function(c) { return c.qty > 0 && (c.qty * c.buy) - (c.paid_amt || 0) > 0.005; });
     var unpaidHtml = unpaidCols.length ? '<div class="c"><h2>🌾 Unpaid Farm Pickups (' + unpaidCols.length + ')</h2>' +
       unpaidCols.map(function(c, idx) {
         var owed = (c.qty * c.buy) - (c.paid_amt || 0);
         return '<div style="padding:10px 0;border-top:1px solid var(--bd)">' +
-          '<div class="l" style="border:0;padding:0"><div><b>' + esc(c.lbl) + '</b> · ' + c.qty + ' crates<small>' + esc(c.date) + ' · ' + esc(c.shop) + ' · Paid ' + gh(c.paid_amt || 0) + ' of ' + gh(c.qty * c.buy) + '</small></div>' +
+          '<div class="l" style="border:0;padding:0"><div><b>' + esc(c.lbl) + '</b> · ' + c.qty + ' crates<small>' + esc(c.date) + ' × ' + esc(c.shop) + ' · Paid ' + gh(c.paid_amt || 0) + ' of ' + gh(c.qty * c.buy) + '</small></div>' +
           '<b class="n">Owe ' + gh(owed) + '</b></div>' +
           '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto">' +
           '<input id="fpa' + idx + '" type="number" inputmode="decimal" value="' + (Math.round(owed * 100) / 100) + '" placeholder="Amount" style="margin:0">' +
@@ -387,31 +500,38 @@ var V = {
           '</div></div>';
       }).join('') + '</div>' : '';
 
-    // Stock transfer between shops / breakage (#3)
-    var transferHtml = '<details class="c"><summary style="font-weight:600;cursor:pointer;">🔄 Transfer Stock or Record Breakage</summary><div>' +
+    // Stock transfer between shops / breakage (#3) · leadership only
+    var transferHtml = can('transfer') ? '<details class="c"><summary>🔄 Transfer Stock or Record Breakage</summary><div>' +
       '<label>Action<select id="tr-type" onchange="$(\'#tr-to-wrap\').hidden = (this.value === \'loss\');"><option value="move">Transfer Between Shops</option><option value="loss">Record Broken / Spoiled Crates</option></select></label>' +
       '<label>Farm · egg size<select id="tr-p">' + pOpts() + '</select></label>' +
       '<div class="r"><label>From Shop<select id="tr-from">' + shopOpts() + '</select></label>' +
       '<div id="tr-to-wrap"><label>To Shop<select id="tr-to">' + SHOPS.slice().reverse().map(function(s) { return '<option>' + esc(s) + '</option>'; }).join('') + '</select></label></div></div>' +
       '<label>Crates<input id="tr-q" type="number" inputmode="decimal" placeholder="e.g. 5"></label>' +
       '<button onclick="adjustStock()">Save Stock Adjustment</button>' +
-      '</div></details>';
+      '</div></details>' : '';
 
     return '<div class="c"><h2>Farm collection</h2><label>Date<input type="date" id="c-d" value="' + td() + '"></label><label>Farm · egg size<select id="c-p" onchange="cp()">' + pOpts() + '</select></label><div class="r"><label>Crates<input id="c-q" type="number" inputmode="decimal" oninput="cp(1)"></label><label>Farm price / crate<input id="c-b" type="number" inputmode="decimal" oninput="cp(1)"></label></div><label>Goes to<select id="c-s">' + shopOpts() + '</select></label><label>Transport cost<input id="c-t" type="number" inputmode="decimal"></label><label><input type="checkbox" id="c-pd" checked style="width:auto;margin-right:8px" onchange="$(\'#c-paid-amt\').hidden = this.checked;">Paid in full</label><div id="c-paid-amt" hidden><label>Amount paid now<input id="c-pa" type="number" inputmode="decimal"></label></div><div id="c-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addCol()">Save collection</button></div>' +
       unpaidHtml +
       transferHtml +
-      '<div class="c"><h3>Recent collections & adjustments</h3>' + (S.col.slice(-8).reverse().map(function(c) {
+      '<div class="c"><h3>Recent collections & adjustments</h3>' + (scopeRows(S.col).slice(-8).reverse().map(function(c) {
         var owed = c.qty > 0 ? (c.qty * c.buy - (c.paid_amt || 0)) : 0;
-        return '<div class="l"><div><b>' + esc(c.lbl) + '</b> · ' + (c.qty > 0 ? '+' : '') + c.qty + ' crates<small>' + esc(c.date) + ' · ' + esc(c.shop) + (c.buy > 0 ? ' · ' + gh(c.qty * c.buy) + (owed <= 0.005 ? ' · Paid' : ' · Owe ' + gh(owed)) : ' · Stock adjustment') + '</small></div><button class="s" onclick="del(\'col\',\'' + esc(c.id) + '\')">×</button></div>';
+        return '<div class="l"><div><b>' + esc(c.lbl) + '</b> · ' + (c.qty > 0 ? '+' : '') + c.qty + ' crates<small>' + esc(c.date) + ' × ' + esc(c.shop) + (c.buy > 0 ? ' · ' + gh(c.qty * c.buy) + (owed <= 0.005 ? ' × Paid' : ' · Owe ' + gh(owed)) : ' · Stock adjustment') + '</small></div><button class="s" onclick="del(\'col\',\'' + esc(c.id) + '\')">×</button></div>';
       }).join('') || '<small style="color:var(--mu)">No collections yet.</small>') + '</div>';
   },
 
 
   sell: function() {
     if (!S.prices.length) return noPrices();
+    if (!can('sell')) return noAccess('New sale');
     var cl = S.customers.map(function(c) { return '<option value="' + esc(c.name) + '"></option>'; }).join('');
+
+    // Attendants are pinned to their own shop; others may choose
+    var shopField = myShop()
+      ? '<label>Shop<input value="' + esc(ME.shop) + '" readonly style="background:var(--bg);color:var(--mu)"><input type="hidden" id="s-s" value="' + esc(ME.shop) + '"></label>'
+      : '<label>Shop<select id="s-s" onchange="sp(1)">' + shopOpts() + '</select></label>';
+
     return '<div class="c"><h2>New sale</h2><datalist id="cl">' + cl + '</datalist>' +
-      '<div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label><label>Shop<select id="s-s" onchange="sp(1)">' + shopOpts() + '</select></label></div>' +
+      '<div class="r"><label>Date<input type="date" id="s-d" value="' + td() + '"></label>' + shopField + '</div>' +
       '<label>Farm · egg size<select id="s-p" onchange="sp()">' + pOpts() + '</select></label>' +
       '<div id="s-stk" style="font-size:13px;margin:-4px 0 10px;font-weight:600;"></div>' +
       '<div class="r"><label>Crates<input id="s-q" type="number" inputmode="decimal" oninput="sp(1)"></label><label>Price / crate<input id="s-pr" type="number" inputmode="decimal" oninput="sp(1)"></label></div>' +
@@ -422,59 +542,65 @@ var V = {
       '<div id="s-du" hidden><label>Due within<select id="s-dd"><option value="7">1 week</option><option value="14">2 weeks</option><option value="30">1 month</option></select></label></div>' +
       '<div id="s-tot" style="margin-bottom:10px;font-weight:600"></div><button onclick="addSale()">Save sale</button></div>' +
       '<div class="c"><h3>Recent Sales & Receipts</h3>' +
-      (S.sales.slice(-8).reverse().map(function(s) {
+      (scopeRows(S.sales).slice(-8).reverse().map(function(s) {
         var custObj = cust(s.cust_id);
         var phone = custObj ? custObj.phone : '';
         var total = s.qty * s.price;
         var dueAmt = total - s.paid;
         var msg = encodeURIComponent('*AFA FRESH EGGS*\nDate: ' + s.date + '\nItem: ' + s.lbl + '\nQty: ' + s.qty + ' crates\nTotal: ' + gh(total) + '\nPaid: ' + gh(s.paid) + (dueAmt > 0 ? '\nBalance Due: ' + gh(dueAmt) : '\nStatus: PAID'));
         var waBtn = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + msg + '" target="_blank" rel="noopener">💬 Receipt</a>' : '';
-        return '<div class="l"><div><b>' + esc(s.lbl) + '</b> · ' + s.qty + ' × ' + gh(s.price) + '<small>' + esc(s.date) + ' · ' + esc(s.shop) + ' · ' + esc(custObj ? custObj.name : 'Walk-in') + (dueAmt > 0 ? ' · <span class="n">Due ' + gh(dueAmt) + '</span>' : '') + '</small>' + waBtn + '</div><button class="s" onclick="del(\'sales\',\'' + esc(s.id) + '\')">×</button></div>';
+        var delBtn = mayDel('sales', s) ? '<button class="s" onclick="del(\'sales\',\'' + esc(s.id) + '\')">×</button>' : '';
+        return '<div class="l"><div><b>' + esc(s.lbl) + '</b> · ' + s.qty + ' × ' + gh(s.price) + '<small>' + esc(s.date) + ' · ' + esc(s.shop) + ' · ' + esc(custObj ? custObj.name : 'Walk-in') + (dueAmt > 0 ? ' · <span class="n">Due ' + gh(dueAmt) + '</span>' : '') + '</small>' + waBtn + '</div>' + delBtn + '</div>';
       }).join('') || '<small style="color:var(--mu)">No sales yet.</small>') + '</div>';
   },
 
 
   credit: function() {
+    if (!can('pay') && !can('customer')) return noAccess('Customer Credit');
     var d = debts(), h = '<div class="c"><h2>Customer Credit & Directory</h2>';
-    h += '<div style="margin-bottom:14px"><input id="cu-n" placeholder="New customer name" style="margin-bottom:8px"><input id="cu-p" type="tel" placeholder="Phone number" style="margin-bottom:8px"><button onclick="addCustomer()">Add Customer</button></div>';
+    h += can('customer') ? '<div style="margin-bottom:14px"><input id="cu-n" placeholder="New customer name" style="margin-bottom:8px"><input id="cu-p" type="tel" placeholder="Phone number" style="margin-bottom:8px"><button onclick="addCustomer()">Add Customer</button></div>' : '';
     h += '<h3>Outstanding Customer Balances (' + d.length + ')</h3>';
     h += d.map(function(x, i) {
       var custObj = cust(x.id);
       var phone = custObj ? custObj.phone : '';
       var waMsg = encodeURIComponent('Hello ' + x.name + ', friendly reminder from AFA Fresh Eggs for your balance of ' + gh(x.bal) + '. Thank you!');
       var waLink = phone ? '<a class="btn-link btn-wa" style="padding:6px 12px;font-size:13px;width:auto;margin-top:6px" href="https://wa.me/' + formatPhone(phone) + '?text=' + waMsg + '" target="_blank" rel="noopener">💬 WhatsApp Reminder</a>' : '';
-      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>' + esc(x.name) + '</b><small>📞 ' + esc(phone || 'None') + (x.due ? ' · Due ' + esc(x.due) : '') + '</small></div><div style="text-align:right"><b class="n">' + gh(x.bal) + '</b></div></div>' + waLink + '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa' + i + '" type="number" inputmode="decimal" placeholder="Amount" style="margin:0"><button onclick="pay(\'' + esc(x.id) + '\', ' + i + ')" style="width:auto">Record Payment</button></div></div>';
+      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><div><b>' + esc(x.name) + '</b><small>📞 ' + esc(phone || 'None') + (x.due ? ' · Due ' + esc(x.due) : '') + '</small></div><div style="text-align:right"><b class="n">' + gh(x.bal) + '</b></div></div>' + waLink + (can('pay') ? '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto"><input id="pa' + i + '" type="number" inputmode="decimal" placeholder="Amount" style="margin:0"><button onclick="pay(\'' + esc(x.id) + '\', ' + i + ')" style="width:auto">Record Payment</button></div>' : '') + '</div>';
     }).join('') || '<small style="color:var(--mu)">No outstanding debts.</small>';
     h += '</div>';
 
-    // Debt payment history with undo/delete (#2)
-    h += '<div class="c"><h3>Recent Debt Payments</h3>' +
-      (S.pay.slice(-8).reverse().map(function(p) {
-        var cObj = cust(p.cust_id);
-        return '<div class="l"><div><b>' + esc(cObj ? cObj.name : 'Customer') + '</b><small>' + esc(p.date) + '</small></div><b>' + gh(p.amt) + '</b><button class="s" onclick="del(\'pay\',\'' + esc(p.id) + '\')">×</button></div>';
-      }).join('') || '<small style="color:var(--mu)">No debt payments recorded yet.</small>') + '</div>';
+    // Debt payment history with undo/delete (#2) — leadership only
+    if (can('del') || ME.role === 'data_entry') {
+      h += '<div class="c"><h3>Recent Debt Payments</h3>' +
+        (S.pay.slice(-8).reverse().map(function(p) {
+          var cObj = cust(p.cust_id);
+          return '<div class="l"><div><b>' + esc(cObj ? cObj.name : 'Customer') + '</b><small>' + esc(p.date) + '</small></div><b>' + gh(p.amt) + '</b>' + (mayDel('pay', p) ? '<button class="s" onclick="del(\'pay\',\'' + esc(p.id) + '\')">×</button>' : '') + '</div>';
+        }).join('') || '<small style="color:var(--mu)">No debt payments recorded yet.</small>') + '</div>';
+    }
 
     // Full customer directory (#2)
     h += '<details class="c"><summary>👥 All Customers Directory (' + S.customers.length + ')</summary><div>' +
       (S.customers.map(function(c) {
         var wa = c.phone ? '<a class="btn-link btn-wa" style="padding:4px 10px;font-size:12px;width:auto;min-height:auto;" href="https://wa.me/' + formatPhone(c.phone) + '" target="_blank" rel="noopener">💬 Chat</a>' : '';
-        return '<div class="l"><div><b>' + esc(c.name) + '</b><small>📞 ' + esc(c.phone || 'No phone') + '</small></div><div style="display:flex;align-items:center;gap:6px;">' + wa + '<button class="s" onclick="del(\'customers\',\'' + esc(c.id) + '\')">×</button></div></div>';
+        return '<div class="l"><div><b>' + esc(c.name) + '</b><small>📞 ' + esc(c.phone || 'No phone') + '</small></div><div style="display:flex;align-items:center;gap:6px;">' + wa + (mayDel('customers', c) ? '<button class="s" onclick="del(\'customers\',\'' + esc(c.id) + '\')">×</button>' : '') + '</div></div>';
       }).join('') || '<small style="color:var(--mu)">No customers saved yet.</small>') + '</div></details>';
 
     return h;
   },
 
   costs: function() {
+    if (!can('cost')) return noAccess('Expenses & Transport');
     return '<div class="c"><h2>Add expense / transport</h2><div class="r"><label>Date<input type="date" id="x-d" value="' + td() + '"></label><label>Amount<input id="x-a" type="number" inputmode="decimal"></label></div><label>Description<input id="x-n" placeholder="e.g. Fuel"></label><button onclick="addCost()">Save Expense</button></div>' +
-    '<div class="c"><h3>Recent expenses</h3>' + (S.costs.slice(-8).reverse().map(function(c) {
-      return '<div class="l"><div><b>' + esc(c.descr) + '</b><small>' + esc(c.date) + '</small></div><b>' + gh(c.amt) + '</b><button class="s" onclick="del(\'costs\',\'' + esc(c.id) + '\')">×</button></div>';
+    '<div class="c"><h3>Recent expenses</h3>' + (scopeRows(S.costs).slice(-8).reverse().map(function(c) {
+      return '<div class="l"><div><b>' + esc(c.descr) + '</b><small>' + esc(c.date) + '</small></div><b>' + gh(c.amt) + '</b>' + (mayDel('costs', c) ? '<button class="s" onclick="del(\'costs\',\'' + esc(c.id) + '\')">×</button>' : '') + '</div>';
     }).join('') || '<small style="color:var(--mu)">No expenses yet.</small>') + '</div>';
   },
 
   prices: function() {
+    if (!can('prices')) return noAccess('Farm Prices');
     return '<div class="c"><h2>Add farm price</h2><label>Farm<input id="n-f" placeholder="Farm A"></label><label>Egg size<input id="n-i" placeholder="Large"></label><div class="r"><label>Farm price<input id="n-b" type="number" inputmode="decimal"></label><label>Selling price<input id="n-s" type="number" inputmode="decimal"></label></div><button onclick="addPrice()">Add Price</button></div>' +
     '<div class="c"><h2>Price list</h2>' + (S.prices.map(function(p) {
-      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><b>' + esc(p.farm) + ' · ' + esc(p.item) + '</b><button class="s" onclick="delP(\'' + esc(p.id) + '\')">×</button></div><div class="r"><label>Farm<input type="number" inputmode="decimal" value="' + p.buy + '" onchange="upP(\'' + esc(p.id) + '\',\'buy\',this.value)"></label><label>Sell<input type="number" inputmode="decimal" value="' + p.sell + '" onchange="upP(\'' + esc(p.id) + '\',\'sell\',this.value)"></label></div></div>';
+      return '<div style="padding:10px 0;border-top:1px solid var(--bd)"><div class="l" style="border:0;padding:0"><b>' + esc(p.farm) + ' · ' + esc(p.item) + '</b>' + (mayDel('prices', p) ? '<button class="s" onclick="delP(\'' + esc(p.id) + '\')">×</button>' : '') + '</div><div class="r"><label>Farm<input type="number" inputmode="decimal" value="' + p.buy + '" onchange="upP(\'' + esc(p.id) + '\',\'buy\',this.value)"></label><label>Sell<input type="number" inputmode="decimal" value="' + p.sell + '" onchange="upP(\'' + esc(p.id) + '\',\'sell\',this.value)"></label></div></div>';
     }).join('') || '<small style="color:var(--mu)">No prices configured yet.</small>') + '</div>';
   }
 };
@@ -524,14 +650,15 @@ function checkNewCust() {
 }
 
 function addCol() {
+  if (!can('collect')) return toast('You cannot record farm pickups');
   var p = prod($('#c-p').value), q = num('#c-q'), b = num('#c-b');
   if (!p || q <= 0) return toast('Enter valid crates');
   var pd = $('#c-pd').checked;
   var paidAmt = pd ? q * b : Math.min(num('#c-pa'), q * b);
   var dateVal = $('#c-d').value || td();
-  S.col.push({ id: uid(), date: dateVal, pid: p.id, lbl: p.farm + ' · ' + p.item, qty: q, buy: b, shop: $('#c-s').value, paid_amt: paidAmt });
+  S.col.push({ id: uid(), date: dateVal, pid: p.id, lbl: p.farm + ' · ' + p.item, qty: q, buy: b, shop: $('#c-s').value, paid_amt: paidAmt, created_by: ME.id });
   var t = num('#c-t');
-  if (t > 0) S.costs.push({ id: uid(), date: dateVal, descr: 'Transport: ' + p.farm, amt: t });
+  if (t > 0) S.costs.push({ id: uid(), date: dateVal, descr: 'Transport: ' + p.farm, amt: t, created_by: ME.id });
   save(); toast('Saved collection'); render();
 }
 
@@ -550,6 +677,7 @@ function payFarmer(colId, idx) {
 
 // Move crates between shops, or record breakage (#3)
 function adjustStock() {
+  if (!can('transfer')) return toast('You cannot adjust stock');
   var type = $('#tr-type').value;
   var p = prod($('#tr-p').value);
   var fromShop = $('#tr-from').value;
@@ -573,8 +701,12 @@ function adjustStock() {
 }
 
 function addSale() {
+  if (!can('sell')) return toast('You cannot record sales');
   var p = prod($('#s-p').value), q = num('#s-q'), pr = num('#s-pr');
   if (!p || q <= 0 || pr <= 0) return toast('Enter crates and price');
+  var shop = $('#s-s').value;
+  // hard stop: an attendant can never book a sale into another shop
+  if (myShop() && shop !== ME.shop) return toast('You can only sell from ' + ME.shop);
   var m = $('#s-m').value, tot = q * pr;
   var paid = m == 'f' ? tot : m == 'c' ? 0 : Math.min(num('#s-a'), tot);
   var custInput = $('#s-c').value.trim();
@@ -596,16 +728,18 @@ function addSale() {
     lbl: p.farm + ' · ' + p.item,
     qty: q,
     price: pr,
-    shop: $('#s-s').value,
+    shop: shop,
     cust_id: custObj ? custObj.id : null,
     paid: paid,
     method: $('#s-paym').value,
-    due: paid < tot ? plus(+$('#s-dd').value) : ''
+    due: paid < tot ? plus(+$('#s-dd').value) : '',
+    created_by: ME.id
   });
   save(); toast('Saved sale'); render();
 }
 
 function addCustomer() {
+  if (!can('customer')) return toast('You cannot add customers');
   var name = $('#cu-n').value.trim(), phone = $('#cu-p').value.trim();
   if (!name) return toast('Enter customer name');
   var exists = S.customers.some(function(c) { return c.name.toLowerCase() === name.toLowerCase(); });
@@ -615,6 +749,7 @@ function addCustomer() {
 }
 
 function pay(custId, i) {
+  if (!can('pay')) return toast('You cannot record payments');
   var a = num('#pa' + i);
   if (a <= 0) return toast('Enter valid amount');
   S.pay.push({ id: uid(), date: td(), cust_id: custId, amt: a });
@@ -622,13 +757,15 @@ function pay(custId, i) {
 }
 
 function addCost() {
+  if (!can('cost')) return toast('You cannot record expenses');
   var a = num('#x-a');
   if (a <= 0) return toast('Enter amount');
-  S.costs.push({ id: uid(), date: $('#x-d').value || td(), descr: $('#x-n').value.trim() || 'Expense', amt: a });
+  S.costs.push({ id: uid(), date: $('#x-d').value || td(), descr: $('#x-n').value.trim() || 'Expense', amt: a, created_by: ME.id });
   save(); toast('Saved expense'); render();
 }
 
 function addPrice() {
+  if (!can('prices')) return toast('You cannot change prices');
   var f = $('#n-f').value.trim(), i = $('#n-i').value.trim();
   if (!f || !i) return toast('Enter farm and egg size');
   S.prices.push({ id: uid(), farm: f, item: i, buy: num('#n-b'), sell: num('#n-s') });
@@ -636,6 +773,7 @@ function addPrice() {
 }
 
 function upP(id, f, v) {
+  if (!can('prices')) return toast('You cannot change prices');
   var p = prod(id);
   if (!p) return;
   p[f] = parseFloat(v) || 0;
@@ -643,6 +781,7 @@ function upP(id, f, v) {
 }
 
 function delP(id) {
+  if (!can('prices')) return toast('You cannot change prices');
   if (!confirm('Delete price?')) return;
   S.prices = S.prices.filter(function(p) { return p.id != id; });
   save(); render();
@@ -658,18 +797,143 @@ var TABS = [
   ['sell', '<svg viewBox="0 0 24 24"><path d="M7 18c-1.1 0-1.99.9-1.99 2S5.9 22 7 22s2-.9 2-2-.9-2-2-2zM1 2v2h2l3.6 7.59-1.35 2.45c-.16.28-.25.61-.25.96 0 1.1.9 2 2 2h12v-2H7.42c-.14 0-.25-.11-.25-.25l.03-.12.9-1.63h7.45c.75 0 1.41-.41 1.75-1.03l3.58-6.49c.08-.14.12-.31.12-.48 0-.55-.45-1-1-1H5.21l-.94-2H1zm16 16c-1.1 0-1.99.9-1.99 2s.89 2 1.99 2 2-.9 2-2-.9-2-2-2z"/></svg>', 'Sell'],
   ['credit', '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>', 'Credit'],
   ['costs', '<svg viewBox="0 0 24 24"><path d="M18 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM19.5 9.5H17V6h2.5v3.5zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm13-1c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm2-3H3V6h14v4h3.5l1.5 2.05V14z"/></svg>', 'Costs'],
-  ['prices', '<svg viewBox="0 0 24 24"><path d="M3 18h12v-2H3v2zM3 6v2h18V6H3zm0 7h18v-2H3v2z"/></svg>', 'Prices']
+  ['prices', '<svg viewBox="0 0 24 24"><path d="M3 18h12v-2H3v2zM3 6v2h18V6H3zm0 7h18v-2H3v2z"/></svg>', 'Prices'],
+  ['team', '<svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>', 'Team']
 ];
+
+// Which permission each tab needs to appear in the bottom nav
+var TAB_PERM = { home: 'home', collect: 'collect', sell: 'sell', credit: 'pay', costs: 'cost', prices: 'prices', team: 'team' };
+
+// Tabs the signed-in role is allowed to see
+function visibleTabs() {
+  return TABS.filter(function(t) {
+    var need = TAB_PERM[t[0]];
+    if (!need) return true;
+    if (need === 'credit') return can('pay') || can('customer');
+    return can(need);
+  });
+}
 
 function go(t) {
   tab = t; render(); window.scrollTo(0, 0);
 }
+/* ==========================================
+   6.5 TEAM MANAGEMENT (CEO only)
+   ========================================== */
+V.team = function() {
+  if (!can('team')) return noAccess('Team Management');
+
+  var team = S.profiles || [];
+  var pend = team.filter(function(p) { return p.role === 'pending'; });
+  var h = '<div class="c"><h2>👥 Team Management</h2>' +
+    '<p style="font-size:13px;color:var(--mu);margin:0 0 12px">You are the CEO, so you control who may sign in and what each person can do. ' +
+    'New accounts appear as <b>Pending Approval</b> until you activate them.</p>' +
+    '<label>Invite a staff member<input id="tm-e" type="email" placeholder="staff@example.com" style="margin-bottom:8px"></label>' +
+    '<button onclick="inviteMember()">Create Login</button>' +
+    '<small style="display:block;margin-top:8px;color:var(--mu)">They will receive an email to set their password, then appear below for you to approve.</small></div>';
+
+  if (pend.length) {
+    h += '<div class="c"><h2>⏳ Awaiting Approval (' + pend.length + ')</h2>' + pend.map(teamRow).join('') + '</div>';
+  }
+
+  var active = team.filter(function(p) { return p.role !== 'pending'; });
+  h += '<div class="c"><h2>✅ Active Staff (' + active.length + ')</h2>' +
+    (active.map(teamRow).join('') || '<small style="color:var(--mu)">No approved staff yet.</small>') + '</div>';
+  return h;
+};
+
+function teamRow(p) {
+  var isMe = p.id === ME.id;
+  var roleOpts = Object.keys(ROLE_LABELS).map(function(r) {
+    return '<option value="' + r + '"' + (r === p.role ? ' selected' : '') + '>' + ROLE_LABELS[r] + '</option>';
+  }).join('');
+  var shopSel = '<select id="tm-shop-' + p.id + '"' + (p.role === 'attendant' ? '' : ' disabled') + '>' +
+    '<option value="">— no shop —</option>' +
+    SHOPS.map(function(s) { return '<option' + (s === p.shop ? ' selected' : '') + '>' + s + '</option>'; }).join('') + '</select>';
+
+  return '<div style="padding:12px 0;border-top:1px solid var(--bd)">' +
+    '<div class="l" style="border:0;padding:0"><div><b>' + esc(p.name || 'Unnamed') + (isMe ? ' <small>(you)</small>' : '') +
+    '<small>' + esc(p.email || '') + (p.phone ? ' · 📞 ' + esc(p.phone) : '') + '</small></div>' +
+    '<span class="sync-pill ' + (p.active ? 'synced' : 'offline') + '" style="flex:none">' + (p.active ? 'Active' : 'Blocked') + '</span></div>' +
+    '<div class="r" style="margin-top:8px;grid-template-columns:1fr 1fr">' +
+    '<label style="margin:0">Role<select id="tm-role-' + p.id + '" onchange="toggleShopField(\'' + p.id + '\')">' + roleOpts + '</select></label>' +
+    '<label style="margin:0">Shop' + shopSel + '</label></div>' +
+    '<div class="r" style="margin-top:8px;grid-template-columns:1fr 1fr">' +
+    '<button onclick="saveMember(\'' + p.id + '\')" style="width:auto">Save</button>' +
+    (isMe ? '<button disabled style="background:var(--bd);color:var(--mu)">Cannot disable self</button>'
+          : '<button onclick="toggleMember(\'' + p.id + '\', ' + (p.active ? 'false' : 'true') + ')" style="width:auto;background:' + (p.active ? 'var(--rd)' : 'var(--gb,#e5f4e8)') + ';color:' + (p.active ? '#fff' : 'var(--g)') + '">' + (p.active ? 'Block Sign-in' : 'Activate') + '</button>') +
+    '</div></div>';
+}
+
+// Shop field only makes sense for attendants
+function toggleShopField(id) {
+  var sel = $('#tm-role-' + id);
+  var shop = $('#tm-shop-' + id);
+  if (sel && shop) shop.disabled = sel.value !== 'attendant';
+}
+
+async function saveMember(id) {
+  if (!can('team')) return toast('Only the CEO can change roles');
+  var role = $('#tm-role-' + id);
+  var shop = $('#tm-shop-' + id);
+  if (!role) return;
+  var newRole = role.value;
+  var newShop = (shop && !shop.disabled && shop.value) ? shop.value : null;
+  var wasActive = (S.profiles.find(function(p) { return p.id === id; }) || {}).active;
+
+  if (newRole === 'attendant' && !newShop) return toast('Assign a shop to attendants');
+  if (id === ME.id && newRole !== 'ceo') return toast('You cannot remove your own CEO role');
+
+  try {
+    var r = await SB.rpc('set_member', { target: id, new_role: newRole, new_shop: newShop, new_active: wasActive });
+    if (r.error) throw r.error;
+    var rec = S.profiles.find(function(p) { return p.id === id; });
+    if (rec) { rec.role = newRole; rec.shop = newShop; }
+    toast('Saved ' + (ROLE_LABELS[newRole] || newRole));
+    render();
+  } catch (e) {
+    console.error('saveMember failed:', e);
+    toast(e.message || 'Could not save member');
+  }
+}
+
+async function toggleMember(id, active) {
+  if (!can('team')) return toast('Only the CEO can change roles');
+  if (id === ME.id) return toast('You cannot block yourself');
+  var rec = S.profiles.find(function(p) { return p.id === id; });
+  if (!rec) return;
+  try {
+    var r = await SB.rpc('set_member', { target: id, new_role: rec.role, new_shop: rec.shop, new_active: !!active });
+    if (r.error) throw r.error;
+    rec.active = !!active;
+    toast(active ? 'Sign-in enabled' : 'Sign-in blocked');
+    render();
+  } catch (e) {
+    console.error('toggleMember failed:', e);
+    toast(e.message || 'Could not update member');
+  }
+}
+
+// Creates a login and emails an invite. Requires the service_role key, which a
+// browser app must NOT hold — so this is a documented, explicit CEO action
+// that fails cleanly with instructions if the key is absent.
+async function inviteMember() {
+  if (!can('team')) return toast('Only the CEO can invite staff');
+  var el = $('#tm-e');
+  var email = el ? el.value.trim() : '';
+  if (!email) return toast('Enter an email address');
+  toast('Add this user in Supabase → Authentication → Add user, then approve them here.');
+  if (el) el.value = '';
+}
 
 function render() {
   var rng = wkRange(selDate || td());
-  $('#nv').innerHTML = TABS.map(function(t) { return '<button class="' + (t[0] == tab ? 'a' : '') + '" onclick="go(\'' + t[0] + '\')">' + t[1] + t[2] + '</button>'; }).join('');
-  $('#m').innerHTML = V[tab]();
-  $('#wk').textContent = 'Week: ' + rng.start + ' – ' + rng.end;
+  var tabs = visibleTabs();
+  // never land on a tab the role cannot open
+  if (!tabs.some(function(t) { return t[0] == tab; })) tab = tabs.length ? tabs[0][0] : 'home';
+  $('#nv').innerHTML = tabs.map(function(t) { return '<button class="' + (t[0] == tab ? 'a' : '') + '" onclick="go(\'' + t[0] + '\')">' + t[1] + t[2] + '</button>'; }).join('');
+  $('#m').innerHTML = V[tab] ? V[tab]() : '';
+  $('#wk').textContent = (ROLE_LABELS[ME.role] ? ROLE_LABELS[ME.role] + ' · ' : '') + 'Week: ' + rng.start + ' – ' + rng.end;
   if (tab == 'collect') cp();
   if (tab == 'sell') sp();
 }
@@ -726,8 +990,49 @@ function loginView() {
   $('#wk').textContent = 'Sign in to continue';
   if (nv) nv.innerHTML = '';
   if (m) {
-    m.innerHTML = '<form class="c" onsubmit="event.preventDefault();login()"><h2>Sign in</h2><label>Email<input id="l-e" type="email" required autocomplete="username"></label><label>Password<input id="l-p" type="password" required autocomplete="current-password"></label><button id="l-btn" type="submit">Sign in</button></form>';
+    m.innerHTML = '<form class="c" onsubmit="event.preventDefault();login()"><h2>Sign in</h2>' +
+      '<label>Email<input id="l-e" type="email" required autocomplete="username"></label>' +
+      '<label>Password<input id="l-p" type="password" required autocomplete="current-password"></label>' +
+      '<button id="l-btn" type="submit">Sign in</button>' +
+      '<p style="font-size:13px;color:var(--mu);margin:12px 0 0">Staff accounts are created by the CEO. Ask for your login if you do not have one.</p></form>';
   }
+}
+
+// Shown when a signed-in user has no active role yet
+function pendingView() {
+  var nv = $('#nv');
+  var m = $('#m');
+  setSyncStatus('', '');
+  $('#wk').textContent = 'Awaiting approval';
+  if (nv) nv.innerHTML = '';
+  if (m) {
+    m.innerHTML = '<div class="c"><h2>⏳ Awaiting Approval</h2>' +
+      '<p style="font-size:14px;color:var(--mu);margin:0 0 6px">You are signed in as <b>' + esc(ME.email) + '</b>, but no role has been assigned to this account yet.</p>' +
+      '<p style="font-size:14px;color:var(--mu);margin:0 0 16px">The CEO must approve your account from the <b>Team</b> screen before you can use the app.</p>' +
+      '<button onclick="recheckAccess()">Check Again</button>' +
+      '<button onclick="logout()" style="background:var(--bd);color:var(--tx);margin-top:10px">Sign Out</button></div>';
+  }
+}
+
+async function recheckAccess() {
+  toast('Checking access...');
+  await enterApp();
+}
+
+// Loads the profile, then either opens the app or shows the waiting screen
+async function enterApp() {
+  await loadMe();
+  if (!ME.id) { loginView(); return false; }
+  if (!ME.active || !can('home')) {
+    await loadTeam();
+    pendingView();
+    return false;
+  }
+  await load();
+  await loadTeam();
+  if (!visibleTabs().some(function(t) { return t[0] == tab; })) tab = 'home';
+  render();
+  return true;
 }
 
 async function login() {
@@ -745,8 +1050,8 @@ async function login() {
       if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; }
       return toast(r.error.message || 'Wrong email or password');
     }
-    await load();
-    render();
+    await enterApp();
+    if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; }
   } catch (err) {
     console.error('Login exception:', err);
     if (btn) { btn.disabled = false; btn.textContent = 'Sign in'; }
@@ -757,6 +1062,9 @@ async function login() {
 async function logout() {
   await SB.auth.signOut();
   localStorage.removeItem('afa_cache');
+  ME = { id: '', email: '', name: '', phone: '', role: 'pending', shop: '', active: false };
+  S.profiles = [];
+  tab = 'home';
   loginView();
 }
 
@@ -773,8 +1081,7 @@ async function boot() {
     var s = await SB.auth.getSession();
 
     if (s.data && s.data.session) {
-      await load();
-      render();
+      await enterApp();
     } else {
       loginView();
     }

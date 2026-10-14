@@ -260,5 +260,24 @@ nav button.a { color: var(--g); font-weight: 700; }
 @media (max-width: 360px) {
   .dash-tile b { font-size: 19px; }
   h2 { font-size: 17px; }
+/* ---------- Very small phones ---------- */
+@media (max-width: 360px) {
+  .dash-tile b { font-size: 19px; }
+  h2 { font-size: 17px; }
+}
+
+/* ---------- Team management rows (CEO screen) ---------- */
+.tm-role {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--bd);
+  color: var(--tx);
+}
+.tm-role.ceo { background: var(--g); color: var(--on); }
+.tm-role.pending { background: var(--y); color: #111; }
+
 }
 
