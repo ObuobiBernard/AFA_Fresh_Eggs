@@ -2,7 +2,7 @@
    1. CONFIGURATION & APP STATE
    ========================================== */
 var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
-var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpdGFsdWN2b2Jva2prZG9nd2lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MzMyMzUsImV4cCI6MjEwNzQwOTIzNX0.bGJt2h-SVqzNCBjwfZMkvkXxn8f0S1sFTTj9CkBO96g'; // <-- Keep your valid Supabase key here!
+var SB_KEY = 'PASTE_YOUR_WORKING_SUPABASE_KEY_HERE'; // <-- Keep your valid Supabase key here!
 var tab = 'home';
 var selDate = ''; // Selected date for viewing weekly dashboard history
 var SHOPS = ['Main Shop', 'Market Shop'];
@@ -136,12 +136,13 @@ var plus = function(days) {
   return localDateStr(d);
 };
 
+// Returns { start: 'YYYY-MM-DD' (Monday), end: 'YYYY-MM-DD' (Sunday) } for any date string
 function wkRange(dateStr) {
   var x = parseDate(dateStr || selDate || td());
-  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // Monday
   var start = localDateStr(x);
   var y = new Date(x);
-  y.setDate(y.getDate() + 6);
+  y.setDate(y.getDate() + 6); // Sunday
   var end = localDateStr(y);
   return { start: start, end: end };
 }
@@ -198,6 +199,7 @@ function formatPhone(p) {
   return clean;
 }
 
+// FIFO debt calc: oldest sale due dates are paid off first
 function debts() {
   var m = {};
   S.sales.slice().sort(function(a, b) { return (a.date || '').localeCompare(b.date || ''); }).forEach(function(s) {
@@ -229,6 +231,7 @@ function debts() {
   }).filter(function(c) { return c.bal > 0.005; });
 }
 
+// Live stock per shop|product. Negative-qty collection rows are adjustments/transfers.
 function stock() {
   var m = {}, L = {};
   S.prices.forEach(function(p) { L[p.id] = p.farm + ' · ' + p.item; });
@@ -260,6 +263,7 @@ function downloadFile(content, type, filename) {
   setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
 }
 
+
 /* ==========================================
    4. VIEW TEMPLATES
    ========================================== */
@@ -286,7 +290,7 @@ var V = {
         st = stock(),
         h = '';
 
-    // Week Filter & Navigation Card
+    // Week picker — jump to any past or future week
     h += '<div class="c">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
     h += '<b>📅 Week: ' + esc(w) + ' to ' + esc(wEnd) + '</b>';
@@ -322,7 +326,8 @@ var V = {
     h += '<div class="dash-tile" onclick="go(\'collect\')" style="cursor:pointer"><span>You Owe Farmers</span><b>' + gh(fo) + '</b></div>';
     h += '</div>';
 
-    // Weekly Sales History for Selected Week
+
+    // Sales recorded in the selected week
     var salesRows = sa.slice().reverse().map(function(s) {
       var custObj = cust(s.cust_id);
       var total = s.qty * s.price;
@@ -335,7 +340,7 @@ var V = {
     h += '<div class="c"><h2>🛒 Sales in Selected Week (' + sa.length + ')</h2>' +
       (salesRows || '<small style="color:var(--mu)">No sales recorded for ' + esc(w) + ' – ' + esc(wEnd) + '.</small>') + '</div>';
 
-    // Weekly Farm Pickups History for Selected Week
+    // Farm pickups recorded in the selected week
     var colRows = cols.slice().reverse().map(function(c) {
       var total = c.qty * c.buy;
       var owedAmt = total - (c.paid_amt || 0);
@@ -347,7 +352,7 @@ var V = {
     h += '<div class="c"><h2>🚚 Farm Pickups in Selected Week (' + cols.length + ')</h2>' +
       (colRows || '<small style="color:var(--mu)">No farm pickups recorded for ' + esc(w) + ' – ' + esc(wEnd) + '.</small>') + '</div>';
 
-    // Current Live Shop Stock
+    // Live stock per shop
     SHOPS.forEach(function(s) {
       var rows = Object.keys(st.m).filter(function(k) { return k.split('|')[0] == s && Math.abs(st.m[k]) > 0.001; }).map(function(k) {
         var q = Math.round(st.m[k] * 100) / 100, pid = k.split('|')[1];
@@ -357,17 +362,18 @@ var V = {
     });
 
     h += '<div class="c"><h3>System & Data</h3>' +
-      '<div class="r" style="margin-bottom:10px;"><button onclick="backup()">Download Backup</button><button onclick=" exportCSV()">Export CSV</button></div>' +
-      '<label style="margin:0"><span class="btn-link" style="background:var(--bg);color:var(--tx);border:1px solid var(--bd);margin-bottom:10px;">📂 Restore Backup (.json)</span><input type="file" accept=".json" hidden onchange="restoreBackup(this)"></label>' +
+      '<div class="r" style="margin-bottom:10px;"><button onclick="backup()">Download Backup</button><button onclick="exportCSV()">Export CSV</button></div>' +
+      '<label class="pick" style="margin:0"><span class="btn-link" style="background:var(--bg);color:var(--tx);border:1px solid var(--bd);margin-bottom:10px;">📂 Restore Backup (.json)</span><input type="file" accept=".json" hidden onchange="restoreBackup(this)"></label>' +
       '<button onclick="logout()" style="background:var(--bd);color:var(--tx);">Sign Out</button></div>';
 
     return h;
   },
 
+
   collect: function() {
     if (!S.prices.length) return noPrices();
 
-    // Unpaid Farmer Collections list (#1 Upgrade)
+    // Unpaid farm pickups with a "Pay Farmer" action (#1)
     var unpaidCols = S.col.filter(function(c) { return c.qty > 0 && (c.qty * c.buy) - (c.paid_amt || 0) > 0.005; });
     var unpaidHtml = unpaidCols.length ? '<div class="c"><h2>🌾 Unpaid Farm Pickups (' + unpaidCols.length + ')</h2>' +
       unpaidCols.map(function(c, idx) {
@@ -376,14 +382,13 @@ var V = {
           '<div class="l" style="border:0;padding:0"><div><b>' + esc(c.lbl) + '</b> · ' + c.qty + ' crates<small>' + esc(c.date) + ' · ' + esc(c.shop) + ' · Paid ' + gh(c.paid_amt || 0) + ' of ' + gh(c.qty * c.buy) + '</small></div>' +
           '<b class="n">Owe ' + gh(owed) + '</b></div>' +
           '<div class="r" style="margin-top:8px;grid-template-columns:1fr auto">' +
-          '<input id="fpa' + idx + '" type="number" inputmode="decimal" value="' + Math.round(owed * 100) / 100 + '" placeholder="Amount" style="margin:0">' +
+          '<input id="fpa' + idx + '" type="number" inputmode="decimal" value="' + (Math.round(owed * 100) / 100) + '" placeholder="Amount" style="margin:0">' +
           '<button onclick="payFarmer(\'' + esc(c.id) + '\',' + idx + ')" style="width:auto">Pay Farmer</button>' +
           '</div></div>';
       }).join('') + '</div>' : '';
 
-    // Stock Transfer / Breakage Card (#3 Upgrade)
-    var transferHtml = '<details class="c"><summary style="font-weight:600;cursor:pointer;">🔄 Transfer Stock or Record Breakage</summary>' +
-      '<div style="margin-top:12px;">' +
+    // Stock transfer between shops / breakage (#3)
+    var transferHtml = '<details class="c"><summary style="font-weight:600;cursor:pointer;">🔄 Transfer Stock or Record Breakage</summary><div>' +
       '<label>Action<select id="tr-type" onchange="$(\'#tr-to-wrap\').hidden = (this.value === \'loss\');"><option value="move">Transfer Between Shops</option><option value="loss">Record Broken / Spoiled Crates</option></select></label>' +
       '<label>Farm · egg size<select id="tr-p">' + pOpts() + '</select></label>' +
       '<div class="r"><label>From Shop<select id="tr-from">' + shopOpts() + '</select></label>' +
@@ -400,6 +405,7 @@ var V = {
         return '<div class="l"><div><b>' + esc(c.lbl) + '</b> · ' + (c.qty > 0 ? '+' : '') + c.qty + ' crates<small>' + esc(c.date) + ' · ' + esc(c.shop) + (c.buy > 0 ? ' · ' + gh(c.qty * c.buy) + (owed <= 0.005 ? ' · Paid' : ' · Owe ' + gh(owed)) : ' · Stock adjustment') + '</small></div><button class="s" onclick="del(\'col\',\'' + esc(c.id) + '\')">×</button></div>';
       }).join('') || '<small style="color:var(--mu)">No collections yet.</small>') + '</div>';
   },
+
 
   sell: function() {
     if (!S.prices.length) return noPrices();
@@ -427,6 +433,7 @@ var V = {
       }).join('') || '<small style="color:var(--mu)">No sales yet.</small>') + '</div>';
   },
 
+
   credit: function() {
     var d = debts(), h = '<div class="c"><h2>Customer Credit & Directory</h2>';
     h += '<div style="margin-bottom:14px"><input id="cu-n" placeholder="New customer name" style="margin-bottom:8px"><input id="cu-p" type="tel" placeholder="Phone number" style="margin-bottom:8px"><button onclick="addCustomer()">Add Customer</button></div>';
@@ -440,15 +447,15 @@ var V = {
     }).join('') || '<small style="color:var(--mu)">No outstanding debts.</small>';
     h += '</div>';
 
-    // Recent Debt Payments History (#2 Upgrade)
+    // Debt payment history with undo/delete (#2)
     h += '<div class="c"><h3>Recent Debt Payments</h3>' +
       (S.pay.slice(-8).reverse().map(function(p) {
         var cObj = cust(p.cust_id);
         return '<div class="l"><div><b>' + esc(cObj ? cObj.name : 'Customer') + '</b><small>' + esc(p.date) + '</small></div><b>' + gh(p.amt) + '</b><button class="s" onclick="del(\'pay\',\'' + esc(p.id) + '\')">×</button></div>';
       }).join('') || '<small style="color:var(--mu)">No debt payments recorded yet.</small>') + '</div>';
 
-    // Full Customer Directory (#2 Upgrade)
-    h += '<details class="c"><summary style="font-weight:600;cursor:pointer;">👥 All Customers Directory (' + S.customers.length + ')</summary><div style="margin-top:10px;">' +
+    // Full customer directory (#2)
+    h += '<details class="c"><summary>👥 All Customers Directory (' + S.customers.length + ')</summary><div>' +
       (S.customers.map(function(c) {
         var wa = c.phone ? '<a class="btn-link btn-wa" style="padding:4px 10px;font-size:12px;width:auto;min-height:auto;" href="https://wa.me/' + formatPhone(c.phone) + '" target="_blank" rel="noopener">💬 Chat</a>' : '';
         return '<div class="l"><div><b>' + esc(c.name) + '</b><small>📞 ' + esc(c.phone || 'No phone') + '</small></div><div style="display:flex;align-items:center;gap:6px;">' + wa + '<button class="s" onclick="del(\'customers\',\'' + esc(c.id) + '\')">×</button></div></div>';
@@ -471,6 +478,7 @@ var V = {
     }).join('') || '<small style="color:var(--mu)">No prices configured yet.</small>') + '</div>';
   }
 };
+
 
 /* ==========================================
    5. ACTIONS & HANDLERS
@@ -505,14 +513,12 @@ function sp(t) {
   $('#s-tot').textContent = 'Total: ' + gh(tot);
 }
 
+// Show a phone field only when the typed name is a brand-new customer (#4)
 function checkNewCust() {
   var val = ($('#s-c').value || '').trim();
   var wrap = $('#s-cp-wrap');
   if (!wrap) return;
-  if (!val) {
-    wrap.hidden = true;
-    return;
-  }
+  if (!val) { wrap.hidden = true; return; }
   var exists = S.customers.some(function(c) { return c.name.toLowerCase() === val.toLowerCase(); });
   wrap.hidden = exists;
 }
@@ -529,6 +535,7 @@ function addCol() {
   save(); toast('Saved collection'); render();
 }
 
+// Pay off (or part-pay) a farmer for an earlier unpaid collection (#1)
 function payFarmer(colId, idx) {
   var c = S.col.find(function(x) { return x.id == colId; });
   if (!c) return;
@@ -541,6 +548,7 @@ function payFarmer(colId, idx) {
   render();
 }
 
+// Move crates between shops, or record breakage (#3)
 function adjustStock() {
   var type = $('#tr-type').value;
   var p = prod($('#tr-p').value);
@@ -552,7 +560,7 @@ function adjustStock() {
 
   var dateVal = td();
   var label = p.farm + ' · ' + p.item;
-  // Deduct from source shop with buy: 0 so financial purchase metrics aren't distorted
+  // buy: 0 keeps purchase totals and profit metrics unaffected
   S.col.push({ id: uid(), date: dateVal, pid: p.id, lbl: label, qty: -q, buy: 0, shop: fromShop, paid_amt: 0 });
   if (type === 'move') {
     S.col.push({ id: uid(), date: dateVal, pid: p.id, lbl: label, qty: q, buy: 0, shop: toShop, paid_amt: 0 });
@@ -572,11 +580,9 @@ function addSale() {
   var custInput = $('#s-c').value.trim();
   var custObj = S.customers.find(function(c) { return c.name.toLowerCase() === custInput.toLowerCase(); });
 
-  if (m != 'f' && paid < tot && !custInput) {
-    return toast('Enter customer name for credit sale');
-  }
+  if (m != 'f' && paid < tot && !custInput) return toast('Enter customer name for credit sale');
 
-  // Auto-create customer on the fly if a name was typed that isn't in S.customers yet (#4 Upgrade)
+  // Auto-create the customer on the fly (#4)
   if (custInput && !custObj) {
     var newPhone = ($('#s-cp') ? $('#s-cp').value : '').trim();
     custObj = { id: uid(), name: custInput, phone: newPhone };
@@ -642,6 +648,7 @@ function delP(id) {
   save(); render();
 }
 
+
 /* ==========================================
    6. NAVIGATION & BOOT
    ========================================== */
@@ -671,6 +678,7 @@ function backup() {
   downloadFile(JSON.stringify(S, null, 2), 'application/json', 'afa-backup-' + td() + '.json');
 }
 
+// Import a previously downloaded backup (#5)
 function restoreBackup(input) {
   var file = input.files && input.files[0];
   if (!file) return;
@@ -693,6 +701,7 @@ function restoreBackup(input) {
     }
   };
   reader.readAsText(file);
+  input.value = '';
 }
 
 function exportCSV() {
@@ -777,3 +786,4 @@ async function boot() {
 }
 
 boot();
+

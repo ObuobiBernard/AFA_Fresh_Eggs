@@ -1,3 +1,4 @@
+/* AFA Fresh Eggs — offline cache service worker */
 var CACHE_NAME = 'afa-eggs-v2';
 var ASSETS = [
   './',
@@ -12,7 +13,10 @@ self.addEventListener('install', function(e) {
   self.skipWaiting();
   e.waitUntil(
     caches.open(CACHE_NAME).then(function(cache) {
-      return cache.addAll(ASSETS);
+      // addAll fails the whole install if one asset 404s, so add one by one
+      return Promise.all(ASSETS.map(function(a) {
+        return cache.add(new Request(a, { cache: 'reload' })).catch(function() {});
+      }));
     })
   );
 });
@@ -29,20 +33,22 @@ self.addEventListener('activate', function(e) {
 });
 
 self.addEventListener('fetch', function(e) {
-  // Never cache Supabase API calls; let app.js handle data caching
-  if (e.request.url.indexOf('supabase.co') !== -1) return;
+  var req = e.request;
+  if (req.method !== 'GET') return;
+  // Never cache Supabase API traffic — app.js handles data caching
+  if (req.url.indexOf('supabase.co') !== -1) return;
 
   e.respondWith(
-    fetch(e.request)
-      .then(function(res) {
+    fetch(req).then(function(res) {
+      if (res && res.ok) {
         var copy = res.clone();
-        caches.open(CACHE_NAME).then(function(cache) { cache.put(e.request, copy); });
-        return res;
-      })
-      .catch(function() {
-        return caches.match(e.request).then(function(cached) {
-          return cached || caches.match('./index.html');
-        });
-      })
+        caches.open(CACHE_NAME).then(function(cache) { cache.put(req, copy); });
+      }
+      return res;
+    }).catch(function() {
+      return caches.match(req).then(function(hit) {
+        return hit || caches.match('./index.html');
+      });
+    })
   );
 });
