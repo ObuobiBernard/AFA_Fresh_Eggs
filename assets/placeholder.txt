@@ -1,1 +1,0 @@
-I verified all 32 factual claims programmatically against app.js, index.html, sw.js, and manifest.json
