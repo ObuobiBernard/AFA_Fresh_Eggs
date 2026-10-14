@@ -7,14 +7,10 @@
   "theme_color": "#1F5E3B",
   "icons": [
     {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%23FFF6E0'/%3E%3Ccircle cx='50' cy='50' r='42' fill='%231F5E3B'/%3E%3Cpath d='M50 22C64 22 72 38 72 50C72 63 62 71 50 71C38 71 28 63 28 50C28 38 36 22 50 22Z' fill='%23FFF6E0'/%3E%3Ccircle cx='50' cy='55' r='9' fill='%23F5A623'/%3E%3Cpath d='M50 72C42 74 34 71 31 65C39 64 47 66 50 72ZM50 72C58 74 66 71 69 65C61 64 53 66 50 72Z' fill='%237FC77A'/%3E%3C/svg%3E",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ]
 }
