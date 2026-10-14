@@ -26,8 +26,8 @@
       </div>
     </div>
     <div style="display:flex; align-items:center; gap:8px;">
-      <span id="sync-pill" class="sync-pill synced" title="Connection status">Synced</span>
-      <button onclick="toggleTheme()" class="icon-btn" aria-label="Toggle theme">🌓</button>
+      <span id="sync-pill" class="sync-pill" hidden title="Connection status">Synced</span>
+      <button type="button" onclick="toggleTheme()" class="icon-btn" aria-label="Toggle theme">🌓</button>
     </div>
   </header>
 
@@ -40,8 +40,8 @@
   <!-- Floating Feedback Toast -->
   <div id="toast" hidden></div>
 
-  <!-- Supabase CDN Client Script -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+  <!-- Supabase CDN Client Script (Latest v2 for sb_publishable_ key support) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <!-- Application Logic -->
   <script src="app.js"></script>
 </body>
