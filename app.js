@@ -2,7 +2,7 @@
    1. CONFIGURATION & APP STATE
    ========================================== */
 var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
-var SB_KEY = 'sb_publishable_H57950cizG2oEs2q602_FQ_gv7v8DgB';
+var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpdGFsdWN2b2Jva2prZG9nd2lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MzMyMzUsImV4cCI6MjEwNzQwOTIzNX0.bGJt2h-SVqzNCBjwfZMkvkXxn8f0S1sFTTj9CkBO96g';
 var tab = 'home';
 var SHOPS = ['Main Shop', 'Market Shop'];
 var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
