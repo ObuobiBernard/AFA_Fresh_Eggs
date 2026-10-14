@@ -58,7 +58,7 @@ function noAccess(what) {
    1. CONFIGURATION & APP STATE
    ========================================== */
 var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
-var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpdGFsdWN2b2Jva2prZG9nd2lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MzMyMzUsImV4cCI6MjEwNzQwOTIzNX0.bGJt2h-SVqzNCBjwfZMkvkXxn8f0S1sFTTj9CkBO96g'; // <-- Keep your valid Supabase key here!
+var SB_KEY = 'sb_publishable_H57950cizG2oEs2q6O2_fQ_gv7v8DgB'; // <-- Keep your valid Supabase key here!
 var tab = 'home';
 var selDate = ''; // Selected date for viewing weekly dashboard history
 var SHOPS = ['Main Shop', 'Market Shop'];
