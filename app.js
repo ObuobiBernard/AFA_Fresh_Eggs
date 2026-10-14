@@ -2,8 +2,9 @@
    1. CONFIGURATION & APP STATE
    ========================================== */
 var SB_URL = 'https://vitalucvobokjkdogwiq.supabase.co';
-var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpdGFsdWN2b2Jva2prZG9nd2lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MzMyMzUsImV4cCI6MjEwNzQwOTIzNX0.bGJt2h-SVqzNCBjwfZMkvkXxn8f0S1sFTTj9CkBO96g';
+var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZpdGFsdWN2b2Jva2prZG9nd2lxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MzMyMzUsImV4cCI6MjEwNzQwOTIzNX0.bGJt2h-SVqzNCBjwfZMkvkXxn8f0S1sFTTj9CkBO96g'; // <-- Replace with your valid Supabase key
 var tab = 'home';
+var selDate = ''; // Selected date for viewing weekly dashboard history
 var SHOPS = ['Main Shop', 'Market Shop'];
 var S = { prices: [], col: [], sales: [], pay: [], costs: [], customers: [] };
 var snap = {};
@@ -19,7 +20,6 @@ async function load() {
   setSyncStatus('saving', 'Loading...');
   var hadError = false;
 
-  // Load cached data first as fallback
   try {
     var cached = localStorage.getItem('afa_cache');
     if (cached) S = Object.assign(S, JSON.parse(cached));
@@ -125,16 +125,42 @@ function localDateStr(d) {
   var da = String(d.getDate()).padStart(2, '0');
   return yr + '-' + mo + '-' + da;
 }
+function parseDate(s) {
+  var p = (s || td()).split('-');
+  return new Date(+p[0], +p[1] - 1, +p[2], 12, 0, 0);
+}
 var td = function() { return localDateStr(new Date()); };
 var plus = function(days) {
   var d = new Date();
   d.setDate(d.getDate() + days);
   return localDateStr(d);
 };
+
+// Returns { start: 'YYYY-MM-DD' (Monday), end: 'YYYY-MM-DD' (Sunday) } for any given date string
+function wkRange(dateStr) {
+  var x = parseDate(dateStr || selDate || td());
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // Monday
+  var start = localDateStr(x);
+  var y = new Date(x);
+  y.setDate(y.getDate() + 6); // Sunday
+  var end = localDateStr(y);
+  return { start: start, end: end };
+}
+
 function wkStart() {
-  var x = new Date();
-  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
-  return localDateStr(x);
+  return wkRange(selDate || td()).start;
+}
+
+function setWeekDate(val) {
+  selDate = val || td();
+  render();
+}
+
+function shiftWeek(days) {
+  var d = parseDate(selDate || td());
+  d.setDate(d.getDate() + days);
+  selDate = localDateStr(d);
+  render();
 }
 
 var gh = function(n) { return 'GH₵ ' + (Math.round((Number(n) || 0) * 100) / 100).toLocaleString(); };
@@ -234,12 +260,20 @@ function downloadFile(content, type, filename) {
    ========================================== */
 var V = {
   home: function() {
-    var w = wkStart(),
-        sa = S.sales.filter(function(s) { return s.date >= w; }),
+    var rng = wkRange(selDate || td()),
+        w = rng.start,
+        wEnd = rng.end,
+        isCurrentWk = (w === wkRange(td()).start),
+        sa = S.sales.filter(function(s) { return s.date >= w && s.date <= wEnd; }),
+        cols = S.col.filter(function(c) { return c.date >= w && c.date <= wEnd; }),
+        pays = S.pay.filter(function(p) { return p.date >= w && p.date <= wEnd; }),
+        csts = S.costs.filter(function(c) { return c.date >= w && c.date <= wEnd; }),
         rev = sum(sa, function(s) { return s.qty * s.price; }),
-        cash = sum(sa, function(s) { return s.paid; }) + sum(S.pay.filter(function(p) { return p.date >= w; }), function(p) { return p.amt; }),
-        buy = sum(S.col.filter(function(c) { return c.date >= w; }), function(c) { return c.qty * c.buy; }),
-        tr = sum(S.costs.filter(function(c) { return c.date >= w; }), function(c) { return c.amt; }),
+        cratesSold = sum(sa, function(s) { return s.qty; }),
+        cratesPicked = sum(cols, function(c) { return c.qty; }),
+        cash = sum(sa, function(s) { return s.paid; }) + sum(pays, function(p) { return p.amt; }),
+        buy = sum(cols, function(c) { return c.qty * c.buy; }),
+        tr = sum(csts, function(c) { return c.amt; }),
         pf = cash - buy - tr,
         d = debts(),
         owed = sum(d, function(x) { return x.bal; }),
@@ -247,20 +281,35 @@ var V = {
         st = stock(),
         h = '';
 
+    // Week Filter & Navigation Card
+    h += '<div class="c">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">';
+    h += '<b>📅 Week: ' + esc(w) + ' to ' + esc(wEnd) + '</b>';
+    if (!isCurrentWk) {
+      h += '<button class="s" style="color:var(--g);font-size:13px;padding:2px 8px;" onclick="setWeekDate(\'\')">This Week</button>';
+    }
+    h += '</div>';
+    h += '<div class="r" style="grid-template-columns:auto 1fr auto;align-items:center;gap:8px;">';
+    h += '<button onclick="shiftWeek(-7)" style="width:auto;padding:10px 14px;" title="Previous week">◀</button>';
+    h += '<input type="date" value="' + esc(selDate || td()) + '" onchange="setWeekDate(this.value)" style="margin:0;text-align:center;">';
+    h += '<button onclick="shiftWeek(7)" style="width:auto;padding:10px 14px;" title="Next week">▶</button>';
+    h += '</div>';
+    h += '</div>';
+
     h += '<div class="dash-grid">';
-    h += '<div class="dash-tile"><span>Sales This Week</span><b>' + gh(rev) + '</b></div>';
+    h += '<div class="dash-tile"><span>Sales (' + cratesSold + ' crates)</span><b>' + gh(rev) + '</b></div>';
     h += '<div class="dash-tile"><span>Cash Received</span><b>' + gh(cash) + '</b></div>';
     h += '</div>';
 
     h += '<div class="dash-tile highlight" style="margin-bottom:12px;">';
-    h += '<span>Net Cash Profit This Week</span>';
+    h += '<span>Net Cash Profit (' + (isCurrentWk ? 'This Week' : esc(w)) + ')</span>';
     h += '<b style="font-size:28px;">' + gh(pf) + '</b>';
     h += '<small style="display:block;margin-top:4px;opacity:0.85;">Cash received − farm purchases − transport</small>';
     h += '</div>';
 
     h += '<div class="dash-grid">';
-    h += '<div class="dash-tile"><span>Farm Purchases</span><b>' + gh(buy) + '</b></div>';
-    h += '<div class="dash-tile"><span>Transport Cost</span><b>' + gh(tr) + '</b></div>';
+    h += '<div class="dash-tile"><span>Pickups (' + cratesPicked + ' crates)</span><b>' + gh(buy) + '</b></div>';
+    h += '<div class="dash-tile"><span>Transport / Costs</span><b>' + gh(tr) + '</b></div>';
     h += '</div>';
 
     h += '<div class="dash-grid">';
@@ -268,12 +317,38 @@ var V = {
     h += '<div class="dash-tile"><span>You Owe Farmers</span><b>' + gh(fo) + '</b></div>';
     h += '</div>';
 
+    // Weekly Sales History for Selected Week
+    var salesRows = sa.slice().reverse().map(function(s) {
+      var custObj = cust(s.cust_id);
+      var total = s.qty * s.price;
+      var dueAmt = total - s.paid;
+      return '<div class="l"><div><b>' + esc(s.lbl) + '</b> · ' + s.qty + ' crates × ' + gh(s.price) +
+        '<small>' + esc(s.date) + ' · ' + esc(s.shop) + ' · ' + esc(custObj ? custObj.name : 'Walk-in') +
+        (dueAmt > 0 ? ' · <span class="n">Unpaid: ' + gh(dueAmt) + '</span>' : ' · Paid') + '</small></div>' +
+        '<b>' + gh(total) + '</b></div>';
+    }).join('');
+    h += '<div class="c"><h2>🛒 Sales in Selected Week (' + sa.length + ')</h2>' +
+      (salesRows || '<small style="color:var(--mu)">No sales recorded for ' + esc(w) + ' – ' + esc(wEnd) + '.</small>') + '</div>';
+
+    // Weekly Farm Pickups History for Selected Week
+    var colRows = cols.slice().reverse().map(function(c) {
+      var total = c.qty * c.buy;
+      var owedAmt = total - (c.paid_amt || 0);
+      return '<div class="l"><div><b>' + esc(c.lbl) + '</b> · ' + c.qty + ' crates × ' + gh(c.buy) +
+        '<small>' + esc(c.date) + ' · ' + esc(c.shop) +
+        (owedAmt > 0 ? ' · <span class="n">Owe: ' + gh(owedAmt) + '</span>' : ' · Paid') + '</small></div>' +
+        '<b>' + gh(total) + '</b></div>';
+    }).join('');
+    h += '<div class="c"><h2>🚚 Farm Pickups in Selected Week (' + cols.length + ')</h2>' +
+      (colRows || '<small style="color:var(--mu)">No farm pickups recorded for ' + esc(w) + ' – ' + esc(wEnd) + '.</small>') + '</div>';
+
+    // Current Live Shop Stock
     SHOPS.forEach(function(s) {
       var rows = Object.keys(st.m).filter(function(k) { return k.split('|')[0] == s; }).map(function(k) {
         var q = st.m[k], pid = k.split('|')[1];
         return '<div class="l"><span>' + esc(st.L[pid]) + '</span><b class="' + (q < 0 ? 'n' : '') + '">' + q + ' crates</b></div>';
       }).join('');
-      h += '<div class="c"><h2>📦 ' + esc(s) + ' Stock</h2>' + (rows || '<small style="color:var(--mu)">No stock recorded.</small>') + '</div>';
+      h += '<div class="c"><h2>📦 ' + esc(s) + ' Current Stock</h2>' + (rows || '<small style="color:var(--mu)">No stock recorded.</small>') + '</div>';
     });
 
     h += '<div class="c"><h3>System & Data</h3><div class="r"><button onclick="backup()">Download Backup</button><button onclick="exportCSV()">Export CSV</button></div><button onclick="logout()" style="background:var(--bd);color:var(--tx);margin-top:10px">Sign Out</button></div>';
@@ -455,9 +530,10 @@ function go(t) {
 }
 
 function render() {
+  var rng = wkRange(selDate || td());
   $('#nv').innerHTML = TABS.map(function(t) { return '<button class="' + (t[0] == tab ? 'a' : '') + '" onclick="go(\'' + t[0] + '\')">' + t[1] + t[2] + '</button>'; }).join('');
   $('#m').innerHTML = V[tab]();
-  $('#wk').textContent = 'Week of ' + wkStart();
+  $('#wk').textContent = 'Week: ' + rng.start + ' – ' + rng.end;
   if (tab == 'collect') cp();
   if (tab == 'sell') sp();
 }
