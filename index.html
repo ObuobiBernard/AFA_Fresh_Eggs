@@ -40,9 +40,19 @@
   <!-- Floating Feedback Toast -->
   <div id="toast" hidden></div>
 
-  <!-- Supabase CDN Client Script (Latest v2 for sb_publishable_ key support) -->
+  <!-- Supabase CDN Client Script -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
   <!-- Application Logic -->
   <script src="app.js"></script>
+  <!-- Offline PWA Service Worker Registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('./sw.js').catch(function(err) {
+          console.warn('SW registration failed:', err);
+        });
+      });
+    }
+  </script>
 </body>
 </html>
