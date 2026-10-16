@@ -1,5 +1,5 @@
 /* AFA Fresh Eggs — offline cache service worker */
-var CACHE_NAME = 'afa-eggs-v2';
+var CACHE_NAME = 'afa-eggs-v3';
 var ASSETS = [
   './',
   './index.html',
