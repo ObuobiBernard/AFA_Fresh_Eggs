@@ -1,0 +1,18 @@
+/* TEAM */
+Founder & Operations Lead: Bernard Owusu Obuobi
+Email: markbrownwane@gmail.com
+Location: Accra, Greater Accra Region, Ghana
+Enterprise: AFA Fresh Eggs Enterprise
+
+/* ENTERPRISE SITES & HUBS */
+Main Shop: Adenta, Greater Accra, Ghana
+Market Shop: Madina Market, Greater Accra, Ghana
+Specialization: Farm Egg Wholesale & Crated Distribution
+
+/* SITE */
+Standards: HTML5, CSS3, ES2020, Progressive Web App (PWA)
+Libraries: React 18, TypeScript, Vite, Supabase
+Database: PostgreSQL with Row-Level Security
+Security: Strict CSP, Subresource Integrity, Role-Based Access Control (RBAC)
+SEO: Schema.org JSON-LD (WholesaleStore & WebApplication), OpenGraph, Twitter Cards
+Last update: 2026-10-18

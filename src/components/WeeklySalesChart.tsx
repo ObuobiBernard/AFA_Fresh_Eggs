@@ -1,108 +1,64 @@
 import React from 'react';
 import { SaleItem } from '../types';
-import { parseDate, localDateStr, gh } from '../constants';
+import { gh } from '../constants';
 
 interface WeeklySalesChartProps {
-  startDate: string; // Monday YYYY-MM-DD
   sales: SaleItem[];
+  startDate: string;
 }
 
-export const WeeklySalesChart: React.FC<WeeklySalesChartProps> = ({ startDate, sales }) => {
-  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+export const WeeklySalesChart: React.FC<WeeklySalesChartProps> = ({ sales, startDate }) => {
+  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-  const weekDays = days.map((dayName, idx) => {
-    const d = parseDate(startDate);
-    d.setDate(d.getDate() + idx);
-    const dateStr = localDateStr(d);
+  const baseDate = new Date(startDate);
+  const dailyData = dayNames.map((day, idx) => {
+    const cur = new Date(baseDate);
+    cur.setDate(baseDate.getDate() + idx);
+    const dateStr = cur.toISOString().split('T')[0];
+
     const daySales = sales.filter(s => s.date === dateStr);
-    const rev = daySales.reduce((acc, s) => acc + s.qty * s.price, 0);
     const crates = daySales.reduce((acc, s) => acc + s.qty, 0);
-    return {
-      dayName,
-      dateStr,
-      shortDate: `${d.getDate()}/${d.getMonth() + 1}`,
-      rev,
-      crates
-    };
+    const revenue = daySales.reduce((acc, s) => acc + s.qty * s.price, 0);
+
+    return { day, dateStr, crates, revenue };
   });
 
-  const maxRev = Math.max(...weekDays.map(w => w.rev), 100);
+  const maxCrates = Math.max(...dailyData.map(d => d.crates), 1);
 
   return (
-    <div className="c">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-        <h3 style={{ margin: 0 }}>📊 Daily Sales Performance</h3>
-        <small style={{ color: 'var(--mu)', fontSize: '11px' }}>Mon – Sun</small>
-      </div>
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(7, 1fr)',
-          gap: '6px',
-          alignItems: 'flex-end',
-          height: '130px',
-          paddingBottom: '24px',
-          position: 'relative'
-        }}
-      >
-        {weekDays.map(d => {
-          const heightPercent = Math.max(8, (d.rev / maxRev) * 100);
-          const hasSales = d.rev > 0;
-
+    <div style={{ marginTop: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', height: '140px', padding: '10px 4px 0' }}>
+        {dailyData.map((d, i) => {
+          const heightPct = Math.round((d.crates / maxCrates) * 100);
           return (
             <div
-              key={d.dateStr}
+              key={i}
               style={{
+                flex: 1,
                 display: 'flex',
                 flexDirection: 'column',
                 alignItems: 'center',
                 height: '100%',
-                justifyContent: 'flex-end',
-                position: 'relative'
+                justifyContent: 'flex-end'
               }}
             >
-              {hasSales && (
-                <div
-                  style={{
-                    fontSize: '9px',
-                    fontWeight: 700,
-                    color: 'var(--g)',
-                    marginBottom: '4px',
-                    whiteSpace: 'nowrap'
-                  }}
-                >
-                  {d.crates}c
-                </div>
-              )}
-
+              <span style={{ fontSize: '10px', color: 'var(--tx)', fontWeight: 600, marginBottom: '4px' }}>
+                {d.crates > 0 ? d.crates : ''}
+              </span>
               <div
                 style={{
                   width: '100%',
-                  maxWidth: '32px',
-                  height: `${heightPercent}%`,
+                  height: `${Math.max(heightPct, 6)}%`,
+                  background: d.crates > 0 ? 'var(--g)' : 'var(--bd)',
                   borderRadius: '6px 6px 2px 2px',
-                  background: hasSales
-                    ? 'linear-gradient(180deg, var(--g), #16462b)'
-                    : 'rgba(20, 34, 25, 0.08)',
-                  transition: 'height 0.4s ease, background 0.3s ease',
-                  boxShadow: hasSales ? '0 2px 8px rgba(31, 94, 59, 0.25)' : 'none'
+                  transition: 'height 0.3s ease',
+                  opacity: d.crates > 0 ? 0.9 : 0.4
                 }}
-                title={`${d.dayName} (${d.dateStr}): ${d.crates} crates · ${gh(d.rev)}`}
+                title={`${d.day} (${d.dateStr}): ${d.crates} crates (${gh(d.revenue)})`}
               />
-
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: 0,
-                  fontSize: '11px',
-                  fontWeight: hasSales ? 700 : 500,
-                  color: hasSales ? 'var(--tx)' : 'var(--mu)',
-                  textAlign: 'center'
-                }}
-              >
-                {d.dayName}
-              </div>
+              <span style={{ fontSize: '11px', color: 'var(--mu)', marginTop: '6px' }}>
+                {d.day}
+              </span>
             </div>
           );
         })}

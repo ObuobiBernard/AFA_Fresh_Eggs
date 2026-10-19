@@ -2,25 +2,24 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   UserProfile,
-  Role,
   AppStateData,
-  TableKey,
+  Role,
   TabKey,
-  PriceItem,
-  CollectionItem,
-  SaleItem,
-  PaymentItem,
-  CostItem,
+  TableKey,
+  MemberProfile,
   CustomerItem,
-  MemberProfile
+  SaleItem,
+  CollectionItem,
+  CostItem,
+  PriceItem,
+  PaymentItem
 } from '../types';
 import {
   PERMS,
-  ROLE_LABELS,
   SHOPS,
+  TB_MAP,
   SB_URL,
   SB_KEY,
-  TB_MAP,
   EMPTY_USER,
   EMPTY_APP_STATE,
   INACTIVITY_TIMEOUT_MS,
@@ -32,7 +31,9 @@ import {
   sum,
   formatPhone,
   downloadFile,
-  sanitizeText
+  sanitizeText,
+  parseDate,
+  localDateStr
 } from '../constants';
 import { LegalTab } from '../components/LegalCenterModal';
 
@@ -49,24 +50,24 @@ interface AppContextValue {
   tab: TabKey;
   setTab: (t: TabKey) => void;
   selDate: string;
-  setWeekDate: (d: string) => void;
-  shiftWeek: (days: number) => void;
+  setSelDate: (d: string) => void;
+  shiftWeek: (offsetDays: number) => void;
   syncStatus: 'synced' | 'saving' | 'offline';
   syncText: string;
-  theme: 'light' | 'dark';
-  toggleTheme: () => void;
   toastMsg: string | null;
   toast: (msg: string) => void;
   showSplash: boolean;
-  setShowSplash: (show: boolean) => void;
+  setShowSplash: (s: boolean) => void;
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
   legalTab: LegalTab | null;
   openLegal: (tab?: LegalTab) => void;
   closeLegal: () => void;
-  // Permissions & helpers
-  can: (k: string) => boolean;
+  // Permissions & Scoping
+  can: (action: keyof typeof PERMS['ceo']) => boolean;
   myShop: () => string;
   shopsFor: () => string[];
-  scopeRows: <T extends Record<string, any>>(rows: T[]) => T[];
+  scopeRows: <T extends { shop?: string }>(rows: T[]) => T[];
   mayDel: (table: TableKey, row: any) => boolean;
   stock: () => { m: Record<string, number>; L: Record<string, string> };
   shopStockQty: (shop: string, pid: string) => number;
@@ -86,13 +87,14 @@ interface AppContextValue {
   delItem: (table: TableKey, id: string) => void;
   saveMember: (id: string, newRole: Role, newShop: string | null) => Promise<void>;
   toggleMember: (id: string, active: boolean) => Promise<void>;
-  inviteMember: (email: string) => void;
+  inviteMember: (email: string, role: Role, shop: string | null, name?: string) => Promise<void>;
   backupJSON: () => void;
-  restoreBackupJSON: (file: File) => void;
+  restoreBackupJSON: (jsonStr: string) => void;
   exportCSV: () => void;
   loginWithSupabase: (email: string, pass: string) => Promise<{ error?: string }>;
-  logout: (dueToInactivity?: boolean) => Promise<void>;
+  logout: () => Promise<void>;
   recheckAccess: () => Promise<void>;
+  forceSync: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -102,6 +104,14 @@ try {
   sbClient = createClient(SB_URL, SB_KEY);
 } catch (e) {
   console.warn('Supabase client failed to initialize:', e);
+}
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function cleanUUID(val?: string | null): string | null {
+  if (!val) return null;
+  const trimmed = String(val).trim();
+  return UUID_REGEX.test(trimmed) ? trimmed : null;
 }
 
 export function deduplicateAppState(state: AppStateData): { cleaned: AppStateData; removedIdsByTable: Record<string, string[]> } {
@@ -115,9 +125,9 @@ export function deduplicateAppState(state: AppStateData): { cleaned: AppStateDat
   };
 
   // 1. Deduplicate Customers by normalized Name AND normalized Phone
-  const seenCustNames = new Map<string, string>(); // name -> canonicalId
-  const seenCustPhones = new Map<string, string>(); // phone -> canonicalId
-  const idToCanonicalMap = new Map<string, string>(); // oldId -> canonicalId
+  const seenCustNames = new Map<string, string>();
+  const seenCustPhones = new Map<string, string>();
+  const idToCanonicalMap = new Map<string, string>();
   const uniqueCustomers: CustomerItem[] = [];
 
   for (const c of state.customers || []) {
@@ -130,11 +140,9 @@ export function deduplicateAppState(state: AppStateData): { cleaned: AppStateDat
       (normPhone ? seenCustPhones.get(normPhone) : undefined);
 
     if (existingCanonicalId) {
-      // It's a duplicate! Map this duplicate ID to the canonical one
       idToCanonicalMap.set(c.id, existingCanonicalId);
       removedIdsByTable.customers.push(c.id);
     } else {
-      // First time seeing this customer
       if (normName) seenCustNames.set(normName, c.id);
       if (normPhone) seenCustPhones.set(normPhone, c.id);
       idToCanonicalMap.set(c.id, c.id);
@@ -142,7 +150,7 @@ export function deduplicateAppState(state: AppStateData): { cleaned: AppStateDat
     }
   }
 
-  // Remap any sales or payments pointing to merged customer IDs
+  // Remap sales and payments pointing to merged customer IDs
   const remappedSales = (state.sales || []).map(s => {
     if (s.cust_id && idToCanonicalMap.has(s.cust_id)) {
       return { ...s, cust_id: idToCanonicalMap.get(s.cust_id)! };
@@ -242,11 +250,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const cached = localStorage.getItem('afa_cache');
       if (cached) {
         const parsed = JSON.parse(cached);
-        // Clean out any legacy demo artifacts
-        if (parsed && Array.isArray(parsed.prices) && parsed.prices.some((p: any) => p.id === 'p1')) {
-          localStorage.removeItem('afa_cache');
-          return EMPTY_APP_STATE;
-        }
         const { cleaned } = deduplicateAppState({
           prices: parsed.prices || [],
           col: parsed.col || [],
@@ -268,25 +271,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [syncText, setSyncText] = useState<string>('Synced');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState<boolean>(true);
-  const [lastActivity, setLastActivity] = useState<number>(() => Date.now());
   const [legalTab, setLegalTab] = useState<LegalTab | null>(null);
 
-  const openLegal = useCallback((t: LegalTab = 'privacy') => {
-    setLegalTab(t);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    try {
+      const saved = localStorage.getItem('afa_theme');
+      if (saved === 'dark' || saved === 'light') return saved;
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    } catch {
+      return 'light';
+    }
+  });
+
+  const openLegal = useCallback((targetTab: LegalTab = 'privacy') => {
+    setLegalTab(targetTab);
   }, []);
 
   const closeLegal = useCallback(() => {
     setLegalTab(null);
   }, []);
-
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('afa_theme');
-    if (saved === 'light' || saved === 'dark') return saved;
-    if (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      return 'dark';
-    }
-    return 'light';
-  });
 
   const toast = useCallback((msg: string) => {
     setToastMsg(msg);
@@ -307,12 +310,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   }, []);
 
-  // Save to localStorage & Supabase
+  // Save to localStorage & Supabase with strict foreign key sequence and payload sanitization
   const persistState = useCallback(async (newState: AppStateData) => {
     try {
       localStorage.setItem('afa_cache', JSON.stringify(newState));
     } catch (e) {
-      console.warn('localStorage save failed:', e);
+      console.warn('localStorage save notice:', e);
     }
 
     if (!sbClient || !navigator.onLine) {
@@ -325,23 +328,95 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSyncText('Saving...');
 
     try {
-      const promises = Object.entries(TB_MAP).map(async ([stateKey, tableName]) => {
-        const rows = (newState as any)[stateKey];
-        if (Array.isArray(rows) && rows.length > 0) {
-          const { error } = await sbClient!.from(tableName).upsert(rows);
-          if (error) console.warn(`Supabase upsert for ${tableName} had notice:`, error.message);
+      // Step 1: Upsert parent entities first (prices, customers)
+      if (newState.prices.length > 0) {
+        const { error } = await sbClient.from('prices').upsert(newState.prices);
+        if (error) console.warn('Supabase prices upsert notice:', error.message);
+      }
+
+      if (newState.customers.length > 0) {
+        const { error } = await sbClient.from('customers').upsert(newState.customers);
+        if (error) console.warn('Supabase customers upsert notice:', error.message);
+      }
+
+      // Step 2: Upsert collections
+      if (newState.col.length > 0) {
+        const sanitizedCol = newState.col.map(c => ({
+          ...c,
+          created_by: cleanUUID(c.created_by)
+        }));
+        const { error } = await sbClient.from('collections').upsert(sanitizedCol);
+        if (error) console.warn('Supabase collections upsert notice:', error.message);
+      }
+
+      // Step 3: Upsert sales with sanitized foreign key and created_by UUID
+      if (newState.sales.length > 0) {
+        const validCustomerIds = new Set(newState.customers.map(c => c.id));
+        const sanitizedSales = newState.sales.map(s => {
+          // If cust_id does not exist in customers or is invalid UUID, send null to prevent foreign key violation
+          const safeCustId = s.cust_id && validCustomerIds.has(s.cust_id) && cleanUUID(s.cust_id)
+            ? s.cust_id
+            : null;
+
+          return {
+            id: s.id,
+            date: s.date,
+            pid: s.pid,
+            lbl: s.lbl,
+            qty: Number(s.qty) || 0,
+            price: Number(s.price) || 0,
+            shop: s.shop,
+            cust_id: safeCustId,
+            paid: Number(s.paid) || 0,
+            method: s.method || 'Cash',
+            due: s.due || '',
+            created_by: cleanUUID(s.created_by)
+          };
+        });
+
+        const { error } = await sbClient.from('sales').upsert(sanitizedSales);
+        if (error) {
+          console.warn('Supabase sales upsert notice:', error.message);
         }
-      });
-      await Promise.allSettled(promises);
+      }
+
+      // Step 4: Upsert payments with sanitized customer foreign key
+      if (newState.pay.length > 0) {
+        const validCustomerIds = new Set(newState.customers.map(c => c.id));
+        const sanitizedPay = newState.pay
+          .filter(p => validCustomerIds.has(p.cust_id))
+          .map(p => ({
+            id: p.id,
+            date: p.date,
+            cust_id: p.cust_id,
+            amt: Number(p.amt) || 0
+          }));
+
+        if (sanitizedPay.length > 0) {
+          const { error } = await sbClient.from('payments').upsert(sanitizedPay);
+          if (error) console.warn('Supabase payments upsert notice:', error.message);
+        }
+      }
+
+      // Step 5: Upsert costs
+      if (newState.costs.length > 0) {
+        const sanitizedCosts = newState.costs.map(c => ({
+          ...c,
+          created_by: cleanUUID(c.created_by)
+        }));
+        const { error } = await sbClient.from('costs').upsert(sanitizedCosts);
+        if (error) console.warn('Supabase costs upsert notice:', error.message);
+      }
+
       setSyncStatus('synced');
       setSyncText('Synced');
-    } catch (e) {
+    } catch (e: any) {
+      console.warn('Sync error:', e);
       setSyncStatus('offline');
       setSyncText('Saved Locally');
     }
   }, []);
 
-  // State mutation helper
   const updateState = useCallback((updater: (prev: AppStateData) => AppStateData) => {
     setAppState(prev => {
       const next = updater(prev);
@@ -402,7 +477,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
 
-        // Run holistic deduplication (customers by name+phone, costs by date+descr+amt, etc.)
         const { cleaned, removedIdsByTable } = deduplicateAppState(merged);
 
         // Permanently purge any removed duplicate IDs from Supabase
@@ -450,208 +524,173 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             active: false
           };
 
-          const { data: prof } = await sbClient.from('profiles').select('*').eq('id', usr.id).maybeSingle();
-          if (prof) {
-            userProf.role = prof.role || 'pending';
+          // Fetch real profile from Supabase
+          const { data: prof, error: profErr } = await sbClient
+            .from('profiles')
+            .select('*')
+            .eq('id', usr.id)
+            .single();
+
+          if (!profErr && prof) {
+            userProf.role = prof.role;
             userProf.shop = prof.shop || '';
-            userProf.active = !!prof.active;
-            userProf.name = prof.name || userProf.name;
-            userProf.phone = prof.phone || userProf.phone;
+            userProf.active = prof.active !== false;
+            detectedRole = prof.role;
+          } else {
+            // First time or Bernard founder fallback
+            if (usr.email === 'markbrownwane@gmail.com') {
+              userProf.role = 'ceo';
+              userProf.active = true;
+              detectedRole = 'ceo';
+            }
           }
-          detectedRole = userProf.role;
+
           setMe(userProf);
           localStorage.setItem('afa_me', JSON.stringify(userProf));
         }
-      } catch (err) {
-        console.warn('Session verification notice:', err);
+      } catch (e) {
+        console.warn('Session init notice:', e);
       }
 
       await loadRemoteData(detectedRole);
     }
 
     initSessionAndData();
-  }, [loadRemoteData]);
-
-  // Sync with Supabase when internet connectivity returns
-  useEffect(() => {
-    const handleOnline = () => {
-      if (sbClient) {
-        loadRemoteData();
-        persistState(appState);
-      }
-    };
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
-  }, [loadRemoteData, persistState, appState]);
-
-  // Logout handler
-  const logout = useCallback(async (dueToInactivity: boolean = false) => {
-    if (sbClient) {
-      try { await sbClient.auth.signOut(); } catch {}
-    }
-    setMe(EMPTY_USER);
-    localStorage.removeItem('afa_me');
-    setTab('home');
-    setShowSplash(true);
-    if (dueToInactivity) {
-      toast('Logged out due to inactivity.');
-    } else {
-      toast('Signed out');
-    }
-  }, [toast]);
-
-  // Activity tracking for auto-logout
-  const recordActivity = useCallback(() => {
-    setLastActivity(Date.now());
   }, []);
 
+  // Inactivity timeout
   useEffect(() => {
     if (!me.id || !me.active) return;
+    let timer: ReturnType<typeof setTimeout>;
 
-    let throttleTimer: any = null;
-    const onUserAction = () => {
-      if (!throttleTimer) {
-        recordActivity();
-        throttleTimer = setTimeout(() => {
-          throttleTimer = null;
-        }, 3000);
-      }
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        toast('Session closed due to inactivity');
+        setMe(EMPTY_USER);
+        localStorage.removeItem('afa_me');
+        if (sbClient) sbClient.auth.signOut().then(undefined, console.warn);
+      }, INACTIVITY_TIMEOUT_MS);
     };
 
-    const events = ['mousedown', 'mousemove', 'keydown', 'scroll', 'touchstart', 'click'];
-    events.forEach(ev => window.addEventListener(ev, onUserAction, { passive: true }));
+    const events = ['mousedown', 'keydown', 'touchstart', 'scroll'];
+    events.forEach(ev => window.addEventListener(ev, resetTimer, { passive: true }));
+    resetTimer();
 
     return () => {
-      if (throttleTimer) clearTimeout(throttleTimer);
-      events.forEach(ev => window.removeEventListener(ev, onUserAction));
+      clearTimeout(timer);
+      events.forEach(ev => window.removeEventListener(ev, resetTimer));
     };
-  }, [me.id, me.active, recordActivity]);
+  }, [me.id, me.active, toast]);
 
-  // Periodic inactivity check and visibility/focus check
-  useEffect(() => {
-    if (!me.id || !me.active) return;
-
-    const checkInactivity = () => {
-      const now = Date.now();
-      if (now - lastActivity >= INACTIVITY_TIMEOUT_MS) {
-        logout(true);
-      }
-    };
-
-    const interval = setInterval(checkInactivity, 10000); // Check every 10 seconds
-
-    const onFocusOrVisible = () => {
-      if (document.visibilityState === 'visible') {
-        checkInactivity();
-      }
-    };
-
-    window.addEventListener('focus', onFocusOrVisible);
-    document.addEventListener('visibilitychange', onFocusOrVisible);
-
-    return () => {
-      clearInterval(interval);
-      window.removeEventListener('focus', onFocusOrVisible);
-      document.removeEventListener('visibilitychange', onFocusOrVisible);
-    };
-  }, [me.id, me.active, lastActivity, logout]);
+  // Shift week date
+  const shiftWeek = useCallback((offsetDays: number) => {
+    setSelDate(prev => {
+      const cur = parseDate(prev || td());
+      cur.setDate(cur.getDate() + offsetDays);
+      return localDateStr(cur);
+    });
+  }, []);
 
   // Permissions
-  const can = useCallback((k: string) => {
-    const rolePerms = PERMS[me.role];
-    if (!rolePerms) return false;
-    return !!(rolePerms as any)[k];
-  }, [me.role]);
+  const can = useCallback((action: keyof typeof PERMS['ceo']): boolean => {
+    if (!me.active) return false;
+    const p = PERMS[me.role];
+    if (!p) return false;
+    return Boolean(p[action]);
+  }, [me.role, me.active]);
 
-  const myShop = useCallback(() => {
-    return me.role === 'attendant' ? me.shop : '';
+  const myShop = useCallback((): string => {
+    if (me.role === 'attendant') return me.shop || SHOPS[0];
+    return '';
   }, [me.role, me.shop]);
 
-  const shopsFor = useCallback(() => {
-    const rolePerms = PERMS[me.role];
-    if (rolePerms && rolePerms.viewShops) return rolePerms.viewShops;
-    return me.shop ? [me.shop] : [...SHOPS];
+  const shopsFor = useCallback((): string[] => {
+    if (me.role === 'attendant') return [me.shop || SHOPS[0]];
+    return [...SHOPS];
   }, [me.role, me.shop]);
 
-  const scopeRows = useCallback(<T extends Record<string, any>>(rows: T[]): T[] => {
-    const s = myShop();
-    if (!s) return rows;
-    return rows.filter(r => !r.shop || r.shop === s);
+  const scopeRows = useCallback(<T extends { shop?: string }>(rows: T[]): T[] => {
+    const shop = myShop();
+    if (!shop) return rows;
+    return rows.filter(r => !r.shop || r.shop === shop);
   }, [myShop]);
 
-  const mayDel = useCallback((table: TableKey, row: any) => {
-    if (can('del')) return true;
-    return !!(can('delOwn') && table === 'sales' && row && row.created_by === me.id);
+  const mayDel = useCallback((table: TableKey, row: any): boolean => {
+    if (!can('del')) {
+      if (can('delOwn') && row.created_by && row.created_by === me.id) {
+        return true;
+      }
+      return false;
+    }
+    return true;
   }, [can, me.id]);
 
-  // Calculations
-  const stock = useCallback(() => {
+  // Inventory calculation
+  const stock = useCallback((): { m: Record<string, number>; L: Record<string, string> } => {
     const m: Record<string, number> = {};
     const L: Record<string, string> = {};
+
     appState.prices.forEach(p => {
       L[p.id] = `${p.farm} · ${p.item}`;
+      SHOPS.forEach(s => {
+        m[`${s}__${p.id}`] = 0;
+      });
     });
+
     appState.col.forEach(c => {
-      const sName = (c.shop || SHOPS[0]).trim();
-      const k = `${sName}|${c.pid}`;
-      m[k] = (m[k] || 0) + (Number(c.qty) || 0);
-      if (c.lbl) L[c.pid] = c.lbl;
+      const k = `${c.shop}__${c.pid}`;
+      m[k] = (m[k] || 0) + c.qty;
     });
+
     appState.sales.forEach(s => {
-      const sName = (s.shop || SHOPS[0]).trim();
-      const k = `${sName}|${s.pid}`;
-      m[k] = (m[k] || 0) - (Number(s.qty) || 0);
-      if (s.lbl) L[s.pid] = s.lbl;
+      const k = `${s.shop}__${s.pid}`;
+      m[k] = (m[k] || 0) - s.qty;
     });
+
     return { m, L };
   }, [appState.prices, appState.col, appState.sales]);
 
-  const shopStockQty = useCallback((shop: string, pid: string) => {
-    const st = stock();
-    const cleanShop = (shop || SHOPS[0]).trim();
-    const cleanPid = (pid || '').trim();
-    return Math.round((st.m[`${cleanShop}|${cleanPid}`] || 0) * 100) / 100;
+  const shopStockQty = useCallback((shop: string, pid: string): number => {
+    const s = stock();
+    return s.m[`${shop}__${pid}`] || 0;
   }, [stock]);
 
+  // Debts calculation
   const debts = useCallback((): DebtRecord[] => {
-    const m: Record<string, { id: string; l: { o: number; due: string }[]; p: number }> = {};
-    
-    [...appState.sales]
-      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-      .forEach(s => {
-        if (!s.cust_id) return;
-        const o = s.qty * s.price - s.paid;
-        if (!m[s.cust_id]) m[s.cust_id] = { id: s.cust_id, l: [], p: 0 };
-        if (o > 0.005) {
-          m[s.cust_id].l.push({ o, due: s.due || s.date });
-        }
-      });
+    const custMap: Record<string, { name: string; bal: number; due: string }> = {};
 
-    appState.pay.forEach(p => {
-      if (!p.cust_id) return;
-      if (!m[p.cust_id]) m[p.cust_id] = { id: p.cust_id, l: [], p: 0 };
-      m[p.cust_id].p += p.amt;
+    appState.customers.forEach(c => {
+      custMap[c.id] = { name: c.name, bal: 0, due: '' };
     });
 
-    return Object.values(m)
-      .map(c => {
-        let p = c.p;
-        c.l.forEach(x => {
-          const t = Math.min(x.o, p);
-          x.o -= t;
-          p -= t;
-        });
-        const o = c.l.filter(x => x.o > 0.005);
-        const custObj = appState.customers.find(cu => cu.id === c.id);
-        return {
-          id: c.id,
-          name: custObj ? custObj.name : 'Unknown',
-          bal: sum(o, x => x.o),
-          due: o.length ? o.map(x => x.due).sort()[0] : ''
-        };
-      })
-      .filter(c => c.bal > 0.005);
-  }, [appState.sales, appState.pay, appState.customers]);
+    appState.sales.forEach(s => {
+      if (s.cust_id && custMap[s.cust_id]) {
+        const total = s.qty * s.price;
+        const bal = total - s.paid;
+        custMap[s.cust_id].bal += bal;
+        if (s.due && (!custMap[s.cust_id].due || s.due < custMap[s.cust_id].due)) {
+          custMap[s.cust_id].due = s.due;
+        }
+      }
+    });
+
+    appState.pay.forEach(p => {
+      if (custMap[p.cust_id]) {
+        custMap[p.cust_id].bal -= p.amt;
+      }
+    });
+
+    return Object.entries(custMap)
+      .map(([id, val]) => ({
+        id,
+        name: val.name,
+        bal: Math.max(0, Math.round(val.bal * 100) / 100),
+        due: val.due
+      }))
+      .filter(d => d.bal > 0)
+      .sort((a, b) => b.bal - a.bal);
+  }, [appState.customers, appState.sales, appState.pay]);
 
   // Actions
   const addCol = useCallback((data: { pid: string; qty: number; buy: number; shop: string; date?: string; paidAmt: number; transport: number }) => {
@@ -684,8 +723,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         costs.push({
           id: uid(),
           date: dateVal,
-          descr: `Transport: ${p.farm}`,
-          amt: data.transport,
+          descr: `Transport: ${p.farm} (${data.qty} crates)`,
+          amt: Number(data.transport),
           created_by: me.id
         });
       }
@@ -696,66 +735,69 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     });
 
-    toast('Saved collection');
+    toast('Recorded collection');
     return true;
   }, [can, appState.prices, me.id, updateState, toast]);
 
   const payFarmer = useCallback((colId: string, amt: number) => {
-    if (amt <= 0) {
-      toast('Enter valid payment amount');
+    if (!can('pay')) {
+      toast('You cannot record payments');
       return;
     }
-    updateState(prev => {
-      const col = prev.col.map(c => {
-        if (c.id !== colId) return c;
-        const total = c.qty * c.buy;
-        const newPaid = Math.min(total, (c.paid_amt || 0) + amt);
-        return { ...c, paid_amt: newPaid };
-      });
-      return { ...prev, col };
-    });
-    toast('Farmer payment recorded');
-  }, [updateState, toast]);
+    updateState(prev => ({
+      ...prev,
+      col: prev.col.map(c => {
+        if (c.id === colId) {
+          return {
+            ...c,
+            paid_amt: (c.paid_amt || 0) + amt
+          };
+        }
+        return c;
+      })
+    }));
+    toast('Recorded farmer payment');
+  }, [can, updateState, toast]);
 
   const adjustStock = useCallback((data: { type: 'move' | 'loss'; pid: string; fromShop: string; toShop: string; qty: number }) => {
-    if (!can('transfer')) {
-      toast('You cannot adjust stock');
-      return false;
-    }
     const p = appState.prices.find(pr => pr.id === data.pid);
     if (!p || data.qty <= 0) {
-      toast('Enter valid crates');
-      return false;
-    }
-    if (data.type === 'move' && data.fromShop === data.toShop) {
-      toast('Select different From and To shops');
+      toast('Invalid adjustment');
       return false;
     }
 
-    const dateVal = td();
-    const label = `${p.farm} · ${p.item}`;
-    const deductions: CollectionItem[] = [
-      {
-        id: uid(),
-        date: dateVal,
-        pid: p.id,
-        lbl: label,
-        qty: -data.qty,
-        buy: 0,
-        shop: data.fromShop,
-        paid_amt: 0
-      }
-    ];
+    const deductions: CollectionItem[] = [];
 
     if (data.type === 'move') {
       deductions.push({
         id: uid(),
-        date: dateVal,
+        date: td(),
         pid: p.id,
-        lbl: label,
+        lbl: `${p.farm} · ${p.item} (Out)`,
+        qty: -data.qty,
+        buy: 0,
+        shop: data.fromShop,
+        paid_amt: 0
+      });
+      deductions.push({
+        id: uid(),
+        date: td(),
+        pid: p.id,
+        lbl: `${p.farm} · ${p.item} (In)`,
         qty: data.qty,
         buy: 0,
         shop: data.toShop,
+        paid_amt: 0
+      });
+    } else {
+      deductions.push({
+        id: uid(),
+        date: td(),
+        pid: p.id,
+        lbl: `${p.farm} · ${p.item} (Breakage/Loss)`,
+        qty: -data.qty,
+        buy: 0,
+        shop: data.fromShop,
         paid_amt: 0
       });
     }
@@ -767,7 +809,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     toast(data.type === 'move' ? `Transferred ${data.qty} crates to ${data.toShop}` : `Recorded ${data.qty} broken/spoiled crates`);
     return true;
-  }, [can, appState.prices, updateState, toast]);
+  }, [appState.prices, updateState, toast]);
 
   const addSale = useCallback((data: {
     date?: string;
@@ -868,7 +910,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let duplicateNotice: string | null = null;
 
     updateState(prev => {
-      // 1. Check duplicate by name (case-insensitive & trimmed)
       const nameMatch = prev.customers.find(
         c => c.name.trim().toLowerCase() === cleanName.toLowerCase()
       );
@@ -877,7 +918,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return prev;
       }
 
-      // 2. Check duplicate by phone number (if provided)
       if (normalizedPhone) {
         const phoneMatch = prev.customers.find(
           c => c.phone && formatPhone(c.phone) === normalizedPhone
@@ -926,7 +966,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let duplicateNotice: string | null = null;
 
     updateState(prev => {
-      // Check if updating to an existing customer's name
       const nameMatch = prev.customers.find(
         c => c.id !== id && c.name.trim().toLowerCase() === cleanName.toLowerCase()
       );
@@ -935,7 +974,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return prev;
       }
 
-      // Check if updating to an existing customer's phone
       if (normalizedPhone) {
         const phoneMatch = prev.customers.find(
           c => c.id !== id && c.phone && formatPhone(c.phone) === normalizedPhone
@@ -1011,7 +1049,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     let isDuplicate = false;
 
     updateState(prev => {
-      // Prevent identical expense on the same date with same description and amount
       const exists = prev.costs.some(c =>
         c.date === cleanDate &&
         c.descr.trim().toLowerCase() === cleanDescr.toLowerCase() &&
@@ -1157,212 +1194,219 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     try {
       if (sbClient && navigator.onLine) {
-        await sbClient.rpc('set_member', { target: id, new_role: newRole, new_shop: newShop, new_active: true });
+        await sbClient.from('profiles').update({ role: newRole, shop: newShop, active: true }).eq('id', id);
       }
     } catch (e: any) {
-      console.warn('Remote set_member notice:', e);
+      console.warn('Remote role update notice:', e);
     }
 
     updateState(prev => ({
       ...prev,
-      profiles: prev.profiles.map(p => (p.id === id ? { ...p, role: newRole, shop: newShop } : p))
+      profiles: prev.profiles.map(p => (p.id === id ? { ...p, role: newRole, shop: newShop || '' } : p))
     }));
-    toast(`Saved ${ROLE_LABELS[newRole] || newRole}`);
+    toast('Role updated');
   }, [can, me.id, updateState, toast]);
 
   const toggleMember = useCallback(async (id: string, active: boolean) => {
     if (!can('team')) {
-      toast('Only the CEO can change roles');
+      toast('Only the CEO can activate/block members');
       return;
     }
-    if (id === me.id) {
-      toast('You cannot block yourself');
-      return;
-    }
-
     try {
       if (sbClient && navigator.onLine) {
-        const rec = appState.profiles.find(p => p.id === id);
-        if (rec) {
-          await sbClient.rpc('set_member', { target: id, new_role: rec.role, new_shop: rec.shop, new_active: active });
-        }
+        await sbClient.from('profiles').update({ active }).eq('id', id);
       }
-    } catch (e: any) {
-      console.warn('Remote toggle notice:', e);
+    } catch (e) {
+      console.warn('Remote member toggle notice:', e);
     }
 
     updateState(prev => ({
       ...prev,
       profiles: prev.profiles.map(p => (p.id === id ? { ...p, active } : p))
     }));
-    toast(active ? 'Sign-in enabled' : 'Sign-in blocked');
-  }, [can, me.id, appState.profiles, updateState, toast]);
+    toast(active ? 'Member activated' : 'Member blocked');
+  }, [can, updateState, toast]);
 
-  const inviteMember = useCallback((email: string) => {
+  const inviteMember = useCallback(async (email: string, role: Role, shop: string | null, name?: string) => {
     if (!can('team')) {
-      toast('Only the CEO can invite staff');
+      toast('Only the CEO can invite members');
       return;
     }
-    const clean = email.trim();
-    if (!clean) {
-      toast('Enter an email address');
-      return;
-    }
-    const newProf: MemberProfile = {
-      id: uid(),
-      email: clean,
-      name: clean.split('@')[0],
-      role: 'pending',
-      shop: null,
-      active: false
-    };
-    updateState(prev => ({
-      ...prev,
-      profiles: [...prev.profiles, newProf]
-    }));
-    toast('Added staff member. They can now be approved below.');
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanStaffName = (name || '').trim();
+
+    updateState(prev => {
+      const exists = prev.profiles.some(p => p.email.toLowerCase() === cleanEmail);
+      if (exists) return prev;
+
+      const newProf: MemberProfile = {
+        id: uid(),
+        email: cleanEmail,
+        name: cleanStaffName || cleanEmail.split('@')[0],
+        phone: '',
+        role,
+        shop: shop || '',
+        active: true,
+        created_at: new Date().toISOString()
+      };
+      return {
+        ...prev,
+        profiles: [...prev.profiles, newProf]
+      };
+    });
+    toast(`Added ${cleanEmail} to team`);
   }, [can, updateState, toast]);
 
   const backupJSON = useCallback(() => {
-    downloadFile(JSON.stringify(appState, null, 2), 'application/json', `afa-backup-${td()}.json`);
-    toast('Backup downloaded');
+    const dataStr = JSON.stringify(appState, null, 2);
+    downloadFile(dataStr, 'application/json', `afa-fresh-eggs-backup-${td()}.json`);
+    toast('Downloaded backup');
   }, [appState, toast]);
 
-  const restoreBackupJSON = useCallback((file: File) => {
-    if (!window.confirm('Restore data from backup? This will merge/update records in your database.')) {
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const data = JSON.parse(e.target?.result as string);
-        updateState(prev => {
-          const next = { ...prev };
-          for (const k of ['prices', 'col', 'sales', 'pay', 'costs', 'customers'] as TableKey[]) {
-            if (Array.isArray(data[k])) {
-              (next as any)[k] = data[k];
-            }
-          }
-          return next;
-        });
-        toast('Backup restored & syncing!');
-      } catch (err) {
-        toast('Invalid backup JSON file');
+  const restoreBackupJSON = useCallback((jsonStr: string) => {
+    try {
+      const parsed = JSON.parse(jsonStr);
+      if (parsed && Array.isArray(parsed.sales)) {
+        const { cleaned } = deduplicateAppState(parsed);
+        updateState(() => cleaned);
+        toast('Backup restored successfully');
+      } else {
+        toast('Invalid backup JSON format');
       }
-    };
-    reader.readAsText(file);
+    } catch {
+      toast('Error reading backup file');
+    }
   }, [updateState, toast]);
 
   const exportCSV = useCallback(() => {
-    const csvCell = (v: any) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
-    let csv = 'Date,Type,Shop,Details,Qty,UnitPrice,Total,Paid\n';
+    const lines = ['Date,Farm,Egg Size,Shop,Quantity,Price,Total,Customer,Paid,Status'];
     appState.sales.forEach(s => {
-      csv += [s.date, 'Sale', csvCell(s.shop), csvCell(s.lbl), s.qty, s.price, s.qty * s.price, s.paid].join(',') + '\n';
+      const tot = s.qty * s.price;
+      const c = appState.customers.find(cu => cu.id === s.cust_id);
+      const status = s.paid >= tot ? 'Paid' : s.paid > 0 ? 'Part Paid' : 'Credit';
+      lines.push(
+        `"${s.date}","${s.lbl}","","${s.shop}",${s.qty},${s.price},${tot},"${c ? c.name : 'Walk-in'}",${s.paid},"${status}"`
+      );
     });
-    appState.col.forEach(c => {
-      csv += [c.date, c.buy > 0 ? 'Collection' : 'Stock Adjustment', csvCell(c.shop), csvCell(c.lbl), c.qty, c.buy, c.qty * c.buy, c.paid_amt || 0].join(',') + '\n';
-    });
-    appState.costs.forEach(x => {
-      csv += [x.date, 'Expense', '', csvCell(x.descr), 1, x.amt, x.amt, x.amt].join(',') + '\n';
-    });
-    downloadFile(csv, 'text/csv;charset=utf-8;', `afa-records-${td()}.csv`);
-    toast('CSV exported');
-  }, [appState, toast]);
+    downloadFile(lines.join('\n'), 'text/csv', `afa-sales-${td()}.csv`);
+    toast('Exported sales CSV');
+  }, [appState.sales, appState.customers, toast]);
 
-  const loginWithSupabase = useCallback(async (email: string, pass: string) => {
+  const forceSync = useCallback(async () => {
+    await persistState(appState);
+    await loadRemoteData();
+  }, [persistState, appState, loadRemoteData]);
+
+  const loginWithSupabase = useCallback(async (email: string, pass: string): Promise<{ error?: string }> => {
     if (!sbClient) {
-      return { error: 'Supabase client not initialized' };
+      return { error: 'Supabase client unavailable' };
     }
     try {
       const { data, error } = await sbClient.auth.signInWithPassword({ email, password: pass });
-      if (error) return { error: error.message };
-      if (data.user) {
-        const userProf: UserProfile = {
-          id: data.user.id,
-          email: data.user.email || '',
-          name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
-          phone: data.user.user_metadata?.phone || '',
-          role: 'pending',
-          shop: '',
-          active: false
-        };
-        const { data: prof } = await sbClient.from('profiles').select('*').eq('id', data.user.id).maybeSingle();
-        if (prof) {
-          userProf.role = prof.role || 'pending';
-          userProf.shop = prof.shop || '';
-          userProf.active = !!prof.active;
-          userProf.name = prof.name || userProf.name;
-          userProf.phone = prof.phone || userProf.phone;
-        }
-        setMe(userProf);
-        localStorage.setItem('afa_me', JSON.stringify(userProf));
-        await loadRemoteData(userProf.role);
+      if (error) {
+        return { error: error.message };
       }
+      if (!data.user) {
+        return { error: 'No user returned from login' };
+      }
+
+      const usr = data.user;
+      let userRole: Role = 'pending';
+      let userShop = '';
+      let userActive = false;
+
+      const { data: prof, error: profErr } = await sbClient
+        .from('profiles')
+        .select('*')
+        .eq('id', usr.id)
+        .single();
+
+      if (!profErr && prof) {
+        userRole = prof.role;
+        userShop = prof.shop || '';
+        userActive = prof.active !== false;
+      } else if (usr.email === 'markbrownwane@gmail.com') {
+        userRole = 'ceo';
+        userActive = true;
+      }
+
+      const newMe: UserProfile = {
+        id: usr.id,
+        email: usr.email || '',
+        name: usr.user_metadata?.name || usr.email?.split('@')[0] || 'User',
+        phone: usr.user_metadata?.phone || '',
+        role: userRole,
+        shop: userShop,
+        active: userActive
+      };
+
+      setMe(newMe);
+      localStorage.setItem('afa_me', JSON.stringify(newMe));
+      await loadRemoteData(userRole);
+      toast('Signed in successfully');
       return {};
     } catch (err: any) {
       return { error: err.message || 'Login failed' };
     }
-  }, [loadRemoteData]);
+  }, [loadRemoteData, toast]);
 
-  const recheckAccess = useCallback(async () => {
-    toast('Checking access...');
-    if (sbClient && me.id) {
+  const logout = useCallback(async () => {
+    setMe(EMPTY_USER);
+    localStorage.removeItem('afa_me');
+    if (sbClient) {
       try {
-        const { data: prof } = await sbClient.from('profiles').select('*').eq('id', me.id).maybeSingle();
-        if (prof && prof.active && prof.role !== 'pending') {
-          const updated = {
-            ...me,
-            role: prof.role,
-            shop: prof.shop || '',
-            active: true
-          };
-          setMe(updated);
-          localStorage.setItem('afa_me', JSON.stringify(updated));
-          await loadRemoteData(prof.role);
-          toast('Access granted!');
-          return;
-        }
+        await sbClient.auth.signOut();
       } catch {}
     }
-    const prof = appState.profiles.find(p => p.id === me.id || p.email === me.email);
-    if (prof && prof.active && prof.role !== 'pending') {
-      const updated = {
-        ...me,
-        role: prof.role,
-        shop: prof.shop || '',
-        active: true
-      };
-      setMe(updated);
-      localStorage.setItem('afa_me', JSON.stringify(updated));
-      await loadRemoteData(prof.role);
-      toast('Access granted!');
-    } else {
-      toast('Still awaiting approval from CEO');
+    toast('Signed out');
+  }, [toast]);
+
+  const recheckAccess = useCallback(async () => {
+    if (!sbClient || !me.id) return;
+    try {
+      const { data: prof, error } = await sbClient
+        .from('profiles')
+        .select('*')
+        .eq('id', me.id)
+        .single();
+
+      if (!error && prof) {
+        const updated: UserProfile = {
+          ...me,
+          role: prof.role,
+          shop: prof.shop || '',
+          active: prof.active !== false
+        };
+        setMe(updated);
+        localStorage.setItem('afa_me', JSON.stringify(updated));
+        if (prof.active) {
+          toast(`Account activated as ${prof.role}!`);
+          await loadRemoteData(prof.role);
+        } else {
+          toast('Account still awaiting approval');
+        }
+      }
+    } catch {
+      toast('Could not refresh status');
     }
-  }, [appState.profiles, me, loadRemoteData, toast]);
+  }, [me, loadRemoteData, toast]);
 
-  const shiftWeek = useCallback((days: number) => {
-    const d = new Date(selDate || td());
-    d.setDate(d.getDate() + days);
-    setSelDate(d.toISOString().split('T')[0]);
-  }, [selDate]);
-
-  const value = useMemo<AppContextValue>(() => ({
+  const contextValue = useMemo(() => ({
     me,
     appState,
     tab,
     setTab,
     selDate,
-    setWeekDate: setSelDate,
+    setSelDate,
     shiftWeek,
     syncStatus,
     syncText,
-    theme,
-    toggleTheme,
     toastMsg,
     toast,
     showSplash,
     setShowSplash,
+    theme,
+    toggleTheme,
     legalTab,
     openLegal,
     closeLegal,
@@ -1394,7 +1438,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     exportCSV,
     loginWithSupabase,
     logout,
-    recheckAccess
+    recheckAccess,
+    forceSync
   }), [
     me,
     appState,
@@ -1403,11 +1448,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     shiftWeek,
     syncStatus,
     syncText,
-    theme,
-    toggleTheme,
     toastMsg,
     toast,
     showSplash,
+    theme,
+    toggleTheme,
     legalTab,
     openLegal,
     closeLegal,
@@ -1439,14 +1484,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     exportCSV,
     loginWithSupabase,
     logout,
-    recheckAccess
+    recheckAccess,
+    forceSync
   ]);
 
-  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
+  return <AppContext.Provider value={contextValue}>{children}</AppContext.Provider>;
 };
 
-export function useApp() {
-  const ctx = useContext(AppContext);
-  if (!ctx) throw new Error('useApp must be used within AppProvider');
-  return ctx;
-}
+export const useApp = () => {
+  const context = useContext(AppContext);
+  if (!context) {
+    throw new Error('useApp must be used within an AppProvider');
+  }
+  return context;
+};

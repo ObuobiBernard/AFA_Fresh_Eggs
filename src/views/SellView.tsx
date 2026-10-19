@@ -4,6 +4,7 @@ import { SHOPS, td, gh, formatPhone, COUNTRY_DIAL_CODES } from '../constants';
 import { SaleItem } from '../types';
 import { vibrateSuccess } from '../utils/haptics';
 import { ReceiptModal } from '../components/ReceiptModal';
+import { Breadcrumbs } from '../components/Breadcrumbs';
 
 export const SellView: React.FC = () => {
   const { appState, can, myShop, me, shopStockQty, scopeRows, addSale, mayDel, delItem } = useApp();
@@ -24,6 +25,7 @@ export const SellView: React.FC = () => {
   const [payStatus, setPayStatus] = useState<'f' | 'p' | 'c'>('f');
   const [paidAmt, setPaidAmt] = useState('');
   const [dueDays, setDueDays] = useState('7');
+  const [submitting, setSubmitting] = useState(false);
 
   const [receiptSale, setReceiptSale] = useState<SaleItem | null>(null);
 
@@ -34,20 +36,16 @@ export const SellView: React.FC = () => {
   }, [attendantShop]);
 
   useEffect(() => {
-    const sel = prices.find(p => p.id === pid);
-    if (sel) {
-      setPrice(String(sel.sell));
+    const selP = prices.find(p => p.id === pid);
+    if (selP) {
+      setPrice(String(selP.sell));
     }
   }, [pid, prices]);
-
-  if (!prices.length) {
-    return <div className="c">Add your farms and prices first in the <b>Prices</b> tab.</div>;
-  }
 
   if (!can('sell')) {
     return (
       <div className="c">
-        <h2>🔒 New sale</h2>
+        <h2>🔒 Record Sale</h2>
         <p style={{ color: 'var(--mu)', fontSize: '14px', margin: '0 0 4px' }}>
           Your role does not include access to this screen.
         </p>
@@ -55,17 +53,11 @@ export const SellView: React.FC = () => {
     );
   }
 
-  const numQty = parseFloat(qty) || 0;
+  const numQty = parseInt(qty, 10) || 0;
   const numPrice = parseFloat(price) || 0;
   const total = numQty * numPrice;
-
-  // Stock check
   const availStock = shopStockQty(shop, pid);
-  const exceedsStock = numQty > 0 && numQty > availStock;
-  const isLowStock = availStock > 0 && availStock <= 10;
-  const isOutOfStock = availStock <= 0;
 
-  // Customer existence check
   const trimmedCust = custName.trim();
   const existingCust = trimmedCust
     ? customers.find(c => c.name.toLowerCase() === trimmedCust.toLowerCase())
@@ -74,6 +66,9 @@ export const SellView: React.FC = () => {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+
     const finalCustPhone = custPhone.trim()
       ? (custDialCode === '+' ? custPhone.trim() : `${custDialCode}${custPhone.trim().replace(/^0+/, '')}`)
       : undefined;
@@ -95,9 +90,8 @@ export const SellView: React.FC = () => {
     if (ok) {
       vibrateSuccess();
 
-      // Find the created sale to prompt receipt modal
-      const createdSale = {
-        id: 'new',
+      const createdSale: SaleItem = {
+        id: 'sale-' + Date.now(),
         date,
         pid,
         lbl: prices.find(p => p.id === pid)?.farm + ' · ' + prices.find(p => p.id === pid)?.item,
@@ -117,15 +111,18 @@ export const SellView: React.FC = () => {
       setPayStatus('f');
       setPaidAmt('');
     }
+    setTimeout(() => setSubmitting(false), 400);
   };
 
   const recentSales = scopeRows(appState.sales).slice(-8).reverse();
 
   return (
     <>
+      <Breadcrumbs currentTab="sell" />
+
       <form className="c" onSubmit={handleSubmit}>
-        <h2>New sale</h2>
-        <datalist id="cl">
+        <h1>Record Egg Sale &amp; Mobile Receipts</h1>
+        <datalist id="customer-list">
           {customers.map(c => (
             <option key={c.id} value={c.name} />
           ))}
@@ -137,71 +134,44 @@ export const SellView: React.FC = () => {
             <input type="date" value={date} onChange={e => setDate(e.target.value)} />
           </label>
 
-          {attendantShop ? (
-            <label>
-              Shop
+          <label>
+            Shop
+            {attendantShop ? (
               <input value={attendantShop} readOnly style={{ background: 'var(--bg)', color: 'var(--mu)' }} />
-            </label>
-          ) : (
-            <label>
-              Shop
+            ) : (
               <select value={shop} onChange={e => setShop(e.target.value)}>
                 {SHOPS.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
-            </label>
-          )}
+            )}
+          </label>
         </div>
 
         <label>
-          Farm · egg size
+          Egg Size / Farm
           <select value={pid} onChange={e => setPid(e.target.value)}>
             {prices.map(p => (
               <option key={p.id} value={p.id}>
-                {p.farm} · {p.item}
+                {p.farm} · {p.item} ({gh(p.sell)}/crate)
               </option>
             ))}
           </select>
         </label>
 
-        <div
-          style={{
-            fontSize: '13px',
-            margin: '-4px 0 10px',
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between'
-          }}
-        >
-          <span className={exceedsStock ? 'n' : ''}>
-            📦 Available in {shop}: <b>{availStock}</b> crates {exceedsStock && '(Exceeds current stock!)'}
-          </span>
-          {isLowStock && !exceedsStock && (
-            <span style={{ color: '#F5A623', fontSize: '11px', fontWeight: 700 }}>
-              ⚠️ Low Stock ({availStock} left)
-            </span>
-          )}
-          {isOutOfStock && (
-            <span style={{ color: '#D32F2F', fontSize: '11px', fontWeight: 700 }}>
-              🚫 Out of Stock
-            </span>
-          )}
-        </div>
-
         <div className="r">
           <label>
-            Crates
+            Quantity (Crates)
             <input
               type="number"
-              inputMode="decimal"
-              placeholder="e.g. 10"
+              min="1"
+              required
+              placeholder="e.g. 5"
               value={qty}
-              autoFocus
               onChange={e => setQty(e.target.value)}
             />
           </label>
+
           <label>
-            Price / crate
+            Price per Crate
             <input
               type="number"
               inputMode="decimal"
@@ -215,12 +185,13 @@ export const SellView: React.FC = () => {
           <label>
             Customer
             <input
-              list="cl"
-              placeholder="Name (or Walk-in)"
+              list="customer-list"
+              placeholder="Customer Name or Walk-in"
               value={custName}
               onChange={e => setCustName(e.target.value)}
             />
           </label>
+
           {isNewCustomer && (
             <label>
               New Customer Phone
@@ -262,111 +233,85 @@ export const SellView: React.FC = () => {
           <select value={payStatus} onChange={e => setPayStatus(e.target.value as any)}>
             <option value="f">Paid in full</option>
             <option value="p">Part paid</option>
-            <option value="c">On credit</option>
+            <option value="c">On credit (Owed)</option>
           </select>
         </label>
 
         {payStatus === 'p' && (
           <label>
-            Amount paid now
+            Amount Paid Now
             <input
               type="number"
               inputMode="decimal"
-              placeholder="0"
+              placeholder={`Max ${gh(total)}`}
               value={paidAmt}
               onChange={e => setPaidAmt(e.target.value)}
             />
           </label>
         )}
 
-        {payStatus !== 'f' && (
-          <label>
-            Due within
-            <select value={dueDays} onChange={e => setDueDays(e.target.value)}>
-              <option value="7">1 week</option>
-              <option value="14">2 weeks</option>
-              <option value="30">1 month</option>
-            </select>
-          </label>
+        {total > 0 && (
+          <div style={{ background: 'var(--bg)', padding: '10px 14px', borderRadius: '10px', marginBottom: '12px', fontSize: '13px' }}>
+            <span>Total: <b>{gh(total)}</b></span>
+            {availStock < numQty && (
+              <span style={{ color: 'var(--rd)', display: 'block', fontSize: '12px', marginTop: '2px' }}>
+                ⚠️ Warning: Only {availStock} crates currently in shop inventory.
+              </span>
+            )}
+          </div>
         )}
 
-        <div style={{ marginBottom: '10px', fontWeight: 600 }}>
-          Total: {gh(total)}
-        </div>
-
-        <button type="submit">Save sale</button>
+        <button type="submit" disabled={submitting}>
+          {submitting ? 'Recording...' : 'Record Sale'}
+        </button>
       </form>
 
-      {/* Recent Sales & Receipts */}
       <div className="c">
-        <h3>Recent Sales & Receipts</h3>
+        <h3>Recent Sales</h3>
         {recentSales.length > 0 ? (
           recentSales.map(s => {
-            const custObj = customers.find(c => c.id === s.cust_id);
-            const phone = custObj ? custObj.phone : '';
-            const totalAmt = s.qty * s.price;
-            const dueAmt = totalAmt - s.paid;
-
-            const msg = encodeURIComponent(
-              `*AFA FRESH EGGS*\nDate: ${s.date}\nItem: ${s.lbl}\nQty: ${s.qty} crates\nTotal: ${gh(totalAmt)}\nPaid: ${gh(s.paid)}` +
-              (dueAmt > 0 ? `\nBalance Due: ${gh(dueAmt)}` : '\nStatus: PAID')
-            );
-            const waLink = phone ? `https://wa.me/${formatPhone(phone)}?text=${msg}` : null;
-            const canDelete = mayDel('sales', s);
+            const tot = s.qty * s.price;
+            const bal = Math.max(0, tot - s.paid);
+            const cObj = appState.customers.find(c => c.id === s.cust_id);
 
             return (
-              <div className="l" key={s.id}>
+              <div key={s.id} className="l">
                 <div>
-                  <b>{s.lbl}</b> · {s.qty} × {gh(s.price)}
+                  <b>{s.lbl} ({s.qty} crates)</b>
                   <small>
-                    {s.date} · {s.shop} · {custObj ? custObj.name : 'Walk-in'}
-                    {dueAmt > 0 && <span className="n"> · Due {gh(dueAmt)}</span>}
+                    {s.date} · {cObj ? cObj.name : 'Walk-in'} ({s.method})
                   </small>
-                  <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <b>{gh(tot)}</b>
+                  {bal > 0 ? (
+                    <small style={{ color: 'var(--rd)' }}>Due: {gh(bal)}</small>
+                  ) : (
+                    <small style={{ color: 'var(--g)' }}>Paid</small>
+                  )}
+                  {mayDel('sales', s) && (
                     <button
                       type="button"
                       className="s"
-                      style={{ color: 'var(--tx)', border: '1px solid var(--bd)', background: 'var(--bg)', padding: '5px 10px', fontSize: '12px' }}
-                      onClick={() => setReceiptSale(s)}
+                      onClick={() => delItem('sales', s.id)}
+                      style={{ marginLeft: '6px', padding: '2px 6px', fontSize: '11px' }}
                     >
-                      🖨️ Receipt
+                      ×
                     </button>
-                    {waLink && (
-                      <a
-                        className="btn-link btn-wa"
-                        style={{ padding: '5px 10px', fontSize: '12px', width: 'auto' }}
-                        href={waLink}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        💬 WhatsApp
-                      </a>
-                    )}
-                  </div>
+                  )}
                 </div>
-                {canDelete && (
-                  <button
-                    type="button"
-                    className="s"
-                    onClick={() => delItem('sales', s.id)}
-                    title="Delete sale"
-                  >
-                    ×
-                  </button>
-                )}
               </div>
             );
           })
         ) : (
-          <small style={{ color: 'var(--mu)' }}>No sales yet.</small>
+          <small style={{ color: 'var(--mu)' }}>No sales recorded yet.</small>
         )}
       </div>
 
-      {/* Printable / POS Receipt Modal */}
       {receiptSale && (
         <ReceiptModal
           sale={receiptSale}
-          customer={customers.find(c => c.id === receiptSale.cust_id) || null}
+          customer={existingCust || (custName ? { id: '', name: custName, phone: custPhone } : null)}
           onClose={() => setReceiptSale(null)}
         />
       )}

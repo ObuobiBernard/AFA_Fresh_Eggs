@@ -1,5 +1,7 @@
 export type Role = 'ceo' | 'data_entry' | 'attendant' | 'driver' | 'pending';
 
+export type TabKey = 'home' | 'collect' | 'sell' | 'credit' | 'costs' | 'prices' | 'team' | 'domain' | '404';
+
 export interface UserProfile {
   id: string;
   email: string;
@@ -8,6 +10,10 @@ export interface UserProfile {
   role: Role;
   shop: string;
   active: boolean;
+}
+
+export interface MemberProfile extends UserProfile {
+  created_at?: string;
 }
 
 export interface PriceItem {
@@ -57,6 +63,7 @@ export interface CostItem {
   date: string;
   descr: string;
   amt: number;
+  shop?: string;
   created_by?: string;
 }
 
@@ -64,17 +71,6 @@ export interface CustomerItem {
   id: string;
   name: string;
   phone: string;
-}
-
-export interface MemberProfile {
-  id: string;
-  email?: string;
-  name?: string;
-  phone?: string;
-  role: Role;
-  shop?: string | null;
-  active: boolean;
-  created_at?: string;
 }
 
 export interface AppStateData {
@@ -88,5 +84,3 @@ export interface AppStateData {
 }
 
 export type TableKey = 'prices' | 'col' | 'sales' | 'pay' | 'costs' | 'customers';
-
-export type TabKey = 'home' | 'collect' | 'sell' | 'credit' | 'costs' | 'prices' | 'team';

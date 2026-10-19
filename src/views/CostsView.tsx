@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { td, gh } from '../constants';
+import { Breadcrumbs } from '../components/Breadcrumbs';
 
 export const CostsView: React.FC = () => {
   const { appState, can, scopeRows, addCost, mayDel, delItem } = useApp();
@@ -8,6 +9,7 @@ export const CostsView: React.FC = () => {
   const [date, setDate] = useState(td());
   const [amt, setAmt] = useState('');
   const [descr, setDescr] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   if (!can('cost')) {
     return (
@@ -19,8 +21,6 @@ export const CostsView: React.FC = () => {
       </div>
     );
   }
-
-  const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,8 +38,10 @@ export const CostsView: React.FC = () => {
 
   return (
     <>
+      <Breadcrumbs currentTab="costs" />
+
       <form className="c" onSubmit={handleSubmit}>
-        <h2>Add expense / transport</h2>
+        <h1>Operating Expenses &amp; Transport Costs</h1>
         <div className="r">
           <label>
             Date

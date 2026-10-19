@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { SaleItem, CustomerItem } from '../types';
 import { gh, formatPhone } from '../constants';
 
@@ -9,47 +9,57 @@ interface ReceiptModalProps {
 }
 
 export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, customer, onClose }) => {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   const total = sale.qty * sale.price;
-  const due = total - sale.paid;
-  const receiptNo = sale.id.slice(-6).toUpperCase();
+  const balance = Math.max(0, total - sale.paid);
+  const custName = customer?.name || 'Walk-in Customer';
+  const custPhone = customer?.phone || '';
+
+  const receiptText = `*AFA FRESH EGGS ENTERPRISE*
+--------------------------------
+*OFFICIAL SALES RECEIPT*
+Receipt No: #${sale.id.slice(-6).toUpperCase()}
+Date: ${sale.date}
+Shop: ${sale.shop}
+Customer: ${custName}
+${custPhone ? `Phone: ${custPhone}\n` : ''}--------------------------------
+Item: ${sale.lbl}
+Quantity: ${sale.qty} crates
+Unit Price: ${gh(sale.price)}
+*Total Amount: ${gh(total)}*
+*Amount Paid: ${gh(sale.paid)} (${sale.method})*
+${balance > 0 ? `*Balance Due: ${gh(balance)}*\nDue Date: ${sale.due || 'Within 7 days'}\n` : '*Status: Fully Paid ✅*\n'}--------------------------------
+Thank you for doing business with AFA Fresh Eggs!
+From The Farm, Every Week.
+Contact: markbrownwane@gmail.com`;
+
+  const waLink = custPhone
+    ? `https://wa.me/${formatPhone(custPhone)}?text=${encodeURIComponent(receiptText)}`
+    : null;
 
   const handlePrint = () => {
     window.print();
   };
 
-  const handleShare = async () => {
-    const text = `*AFA FRESH EGGS - SALE RECEIPT*\nReceipt: #${receiptNo}\nDate: ${sale.date}\nShop: ${sale.shop}\nItem: ${sale.lbl}\nQuantity: ${sale.qty} crates\nPrice: ${gh(sale.price)}/crate\nTotal: ${gh(total)}\nPaid: ${gh(sale.paid)} (${sale.method})\n${due > 0 ? `Balance Due: ${gh(due)} (Due: ${sale.due})` : 'Status: PAID IN FULL'}\nCustomer: ${customer ? customer.name : 'Walk-in'}\nThank you for choosing AFA Fresh Eggs!`;
-
-    if (navigator.share) {
-      try {
-        await navigator.share({
-          title: `Receipt #${receiptNo} - AFA Fresh Eggs`,
-          text
-        });
-        return;
-      } catch {}
-    }
-    navigator.clipboard?.writeText(text);
-    alert('Receipt text copied to clipboard!');
-  };
-
-  const waMsg = encodeURIComponent(
-    `*AFA FRESH EGGS - RECEIPT #${receiptNo}*\nDate: ${sale.date}\nShop: ${sale.shop}\nItem: ${sale.lbl}\nQty: ${sale.qty} crates\nTotal: ${gh(total)}\nPaid: ${gh(sale.paid)} (${sale.method})\n${due > 0 ? `Balance Due: ${gh(due)}` : 'Status: PAID'}`
-  );
-  const waLink = customer?.phone ? `https://wa.me/${formatPhone(customer.phone)}?text=${waMsg}` : null;
-
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Sale receipt slip"
+      aria-labelledby="receipt-title"
       style={{
         position: 'fixed',
         inset: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        backgroundColor: 'rgba(0, 0, 0, 0.72)',
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
-        zIndex: 1000,
+        zIndex: 1100,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -60,120 +70,135 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({ sale, customer, onCl
       <div
         className="c"
         style={{
-          maxWidth: '380px',
+          maxWidth: '440px',
           width: '100%',
-          backgroundColor: '#FFFFFF',
-          color: '#142219',
-          padding: '24px 20px',
           margin: 0,
-          borderRadius: '16px',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.3)',
-          fontFamily: 'monospace'
+          background: 'var(--cd)',
+          borderRadius: '18px',
+          padding: '20px'
         }}
         onClick={e => e.stopPropagation()}
       >
-        {/* Printable thermal receipt layout */}
-        <div id="printable-receipt" style={{ textAlign: 'center', borderBottom: '1px dashed #bbb', paddingBottom: '14px', marginBottom: '14px' }}>
-          <div style={{ fontSize: '18px', fontWeight: 800, letterSpacing: '1px' }}>AFA FRESH EGGS</div>
-          <div style={{ fontSize: '12px', color: '#555' }}>From The Farm, Every Week</div>
-          <div style={{ fontSize: '12px', color: '#555' }}>Shop: {sale.shop}</div>
-          <div style={{ fontSize: '11px', color: '#777', marginTop: '4px' }}>
-            Receipt #{receiptNo} · {sale.date}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <div>
+            <h2 id="receipt-title" style={{ margin: 0, fontSize: '18px' }}>
+              🧾 Sales Receipt
+            </h2>
+            <small style={{ color: 'var(--mu)', fontSize: '12px' }}>
+              #{sale.id.slice(-6).toUpperCase()} · {sale.date}
+            </small>
           </div>
+          <button
+            type="button"
+            className="s"
+            onClick={onClose}
+            aria-label="Close receipt dialog"
+            style={{ fontSize: '18px', padding: '4px 10px', minHeight: 'auto' }}
+          >
+            ×
+          </button>
         </div>
 
-        <div style={{ fontSize: '13px', lineHeight: 1.6, marginBottom: '14px' }}>
+        {/* Paper receipt view */}
+        <div
+          style={{
+            background: 'var(--bg)',
+            borderRadius: '12px',
+            border: '1px dashed var(--bd)',
+            padding: '14px',
+            fontSize: '13px',
+            lineHeight: 1.6,
+            marginBottom: '16px',
+            fontFamily: 'monospace'
+          }}
+        >
+          <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '14px', marginBottom: '4px' }}>
+            AFA FRESH EGGS ENTERPRISE
+          </div>
+          <div style={{ textAlign: 'center', fontSize: '11px', color: 'var(--mu)', marginBottom: '10px' }}>
+            {sale.shop} · {sale.date}
+          </div>
+
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span>Customer:</span>
-            <b>{customer ? customer.name : 'Walk-in'}</b>
+            <b>{custName}</b>
           </div>
-          {customer?.phone && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#666' }}>
+          {custPhone && (
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span>Phone:</span>
-              <span>{customer.phone}</span>
+              <span>{custPhone}</span>
             </div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px' }}>
-            <span>Item:</span>
-            <span>{sale.lbl}</span>
-          </div>
+
+          <div style={{ borderTop: '1px dashed var(--bd)', margin: '8px 0' }} />
+
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Qty:</span>
-            <span>{sale.qty} crates × {gh(sale.price)}</span>
+            <span>{sale.lbl}:</span>
+            <span>{sale.qty} crates @ {gh(sale.price)}</span>
           </div>
-          <div style={{ borderTop: '1px dashed #ddd', margin: '8px 0' }} />
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '15px', fontWeight: 'bold' }}>
-            <span>TOTAL:</span>
-            <span>{gh(total)}</span>
+
+          <div style={{ borderTop: '1px dashed var(--bd)', margin: '8px 0' }} />
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
+            <b>Total:</b>
+            <b>{gh(total)}</b>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', color: '#1F5E3B' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--g)' }}>
             <span>Paid ({sale.method}):</span>
             <b>{gh(sale.paid)}</b>
           </div>
-          {due > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: '#D32F2F', fontWeight: 'bold' }}>
-              <span>Balance Due:</span>
-              <span>{gh(due)}</span>
+          {balance > 0 ? (
+            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--rd)' }}>
+              <b>Balance Due:</b>
+              <b>{gh(balance)}</b>
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', color: 'var(--g)', fontWeight: 'bold', marginTop: '4px' }}>
+              ✅ Fully Paid
             </div>
           )}
         </div>
 
-        <div style={{ textAlign: 'center', fontSize: '11px', color: '#777', borderTop: '1px dashed #bbb', paddingTop: '10px', marginBottom: '16px' }}>
-          Thank you for your business!<br />Fresh crates guaranteed.
-        </div>
-
         {/* Action buttons */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
-          <button
-            type="button"
-            onClick={handlePrint}
-            style={{ fontSize: '13px', padding: '10px 4px', minHeight: 'auto' }}
-          >
-            🖨️ Print Slip
-          </button>
-          <button
-            type="button"
-            onClick={handleShare}
-            style={{ fontSize: '13px', padding: '10px 4px', minHeight: 'auto', background: '#345241' }}
-          >
-            📲 Share Slip
-          </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {waLink && (
+            <a
+              href={waLink}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn-link btn-wa"
+              style={{
+                width: '100%',
+                padding: '10px',
+                textAlign: 'center',
+                fontSize: '14px',
+                fontWeight: 600,
+                borderRadius: '10px'
+              }}
+            >
+              💬 Send Receipt via WhatsApp
+            </a>
+          )}
+
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              type="button"
+              className="s"
+              onClick={handlePrint}
+              style={{ flex: 1, padding: '10px', background: 'var(--bg)', border: '1px solid var(--bd)', color: 'var(--tx)' }}
+            >
+              🖨️ Print
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ flex: 1, padding: '10px' }}
+            >
+              Done
+            </button>
+          </div>
         </div>
-
-        {waLink && (
-          <a
-            className="btn-link btn-wa"
-            href={waLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ width: '100%', marginBottom: '8px', fontSize: '13px', padding: '10px' }}
-          >
-            💬 WhatsApp Receipt
-          </a>
-        )}
-
-        <button
-          type="button"
-          onClick={onClose}
-          style={{ width: '100%', background: '#e0e0e0', color: '#333', fontSize: '13px', padding: '8px', minHeight: 'auto' }}
-        >
-          Close
-        </button>
       </div>
-
-      <style>{`
-        @media print {
-          body * { visibility: hidden !important; }
-          #printable-receipt, #printable-receipt * { visibility: visible !important; }
-          #printable-receipt {
-            position: fixed;
-            left: 0;
-            top: 0;
-            width: 100%;
-            padding: 10px;
-          }
-        }
-      `}</style>
     </div>
   );
 };

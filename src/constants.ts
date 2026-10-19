@@ -145,12 +145,15 @@ export function uid(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  return Math.random().toString(36).slice(2, 9);
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
 }
 
 export function sanitizeText(str?: string | null, maxLen = 255): string {
   if (!str) return '';
-  // Remove control characters (except common punctuation and emojis)
   const clean = String(str).replace(/[\u0000-\u001F\u007F-\u009F]/g, '').trim();
   return clean.slice(0, maxLen);
 }
@@ -199,7 +202,6 @@ export function sum<T>(arr: T[], fn: (item: T) => number): number {
 export function formatPhone(p?: string | null): string {
   if (!p) return '';
   const raw = String(p).trim();
-  // If explicitly prefixed with '+' or country code digits
   if (raw.startsWith('+')) {
     return raw.replace(/\D/g, '');
   }
@@ -222,7 +224,7 @@ export function downloadFile(content: string, type: string, filename: string): v
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export const INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+export const INACTIVITY_TIMEOUT_MS = 25 * 60 * 1000;
 
 export const EMPTY_USER: UserProfile = {
   id: '',
@@ -243,4 +245,3 @@ export const EMPTY_APP_STATE: AppStateData = {
   customers: [],
   profiles: []
 };
-

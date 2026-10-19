@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { Breadcrumbs } from '../components/Breadcrumbs';
 
 export const PricesView: React.FC = () => {
   const { appState, can, addPrice, updatePrice, delPrice } = useApp();
@@ -8,6 +9,7 @@ export const PricesView: React.FC = () => {
   const [item, setItem] = useState('');
   const [buy, setBuy] = useState('');
   const [sell, setSell] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   if (!can('prices')) {
     return (
@@ -19,8 +21,6 @@ export const PricesView: React.FC = () => {
       </div>
     );
   }
-
-  const [submitting, setSubmitting] = useState(false);
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
@@ -38,8 +38,10 @@ export const PricesView: React.FC = () => {
 
   return (
     <>
+      <Breadcrumbs currentTab="prices" />
+
       <form className="c" onSubmit={handleAdd}>
-        <h2>Add farm price</h2>
+        <h1>Farm Prices &amp; Selling Rates Configuration</h1>
         <label>
           Farm
           <input

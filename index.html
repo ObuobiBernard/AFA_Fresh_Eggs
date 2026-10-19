@@ -7,17 +7,88 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="AFA Eggs">
+  <meta name="apple-mobile-web-app-title" content="AFA Fresh Eggs">
   <meta http-equiv="X-Content-Type-Options" content="nosniff">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <meta http-equiv="Permissions-Policy" content="camera=(), microphone=(), geolocation=()">
-  <title>AFA Fresh Eggs Manager</title>
-  <meta name="description" content="Daily egg sales, farm collections, customer credit and stock manager for crated-egg distribution.">
-  <meta property="og:title" content="AFA Fresh Eggs Manager">
-  <meta property="og:description" content="Daily egg sales, farm collections, customer credit and stock manager for crated-egg distribution.">
+  <meta name="robots" content="index, follow">
+
+  <!-- Primary SEO Metadata -->
+  <title>AFA Fresh Eggs Enterprise – Daily Sales & Wholesale Egg Management</title>
+  <meta name="description" content="AFA Fresh Eggs Enterprise: daily farm collections, egg crate sales, customer credit statements, and multi-shop stock distribution in Greater Accra, Ghana.">
+  <link rel="canonical" href="https://afafresheggs.com/">
+  <link rel="author" href="./humans.txt">
+
+  <!-- Favicons and Touch Icons -->
+  <link rel="icon" type="image/x-icon" href="./favicon.ico">
   <link rel="icon" type="image/svg+xml" href="./icon.svg">
   <link rel="icon" type="image/png" sizes="192x192" href="./pwa-192x192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="./pwa-512x512.png">
   <link rel="apple-touch-icon" href="./apple-touch-icon.png">
+
+  <!-- OpenGraph Social Share Card -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="AFA Fresh Eggs Enterprise">
+  <meta property="og:url" content="https://afafresheggs.com/">
+  <meta property="og:title" content="AFA Fresh Eggs Enterprise – Daily Sales & Wholesale Egg Management">
+  <meta property="og:description" content="Commercial farm egg distribution, daily collections, shop sales tracking, customer credit ledgers, and digital WhatsApp statements.">
+  <meta property="og:image" content="./og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="AFA Fresh Eggs Enterprise Wholesale Farm Distribution Portal">
+
+  <!-- Twitter / X Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AFA Fresh Eggs Enterprise – Daily Sales & Wholesale Egg Management">
+  <meta name="twitter:description" content="Commercial farm egg distribution, daily collections, shop sales tracking, customer credit ledgers, and digital WhatsApp statements.">
+  <meta name="twitter:image" content="./og-image.png">
+
+  <!-- Schema.org JSON-LD: Local Business & Wholesale Store -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WholesaleStore",
+        "@id": "https://afafresheggs.com/#business",
+        "name": "AFA Fresh Eggs Enterprise",
+        "description": "Daily farm egg distribution, crate wholesale, collections, and customer credit management in Greater Accra, Ghana.",
+        "url": "https://afafresheggs.com/",
+        "logo": "https://afafresheggs.com/icon.svg",
+        "image": "https://afafresheggs.com/og-image.png",
+        "founder": {
+          "@type": "Person",
+          "name": "Bernard Owusu Obuobi"
+        },
+        "email": "markbrownwane@gmail.com",
+        "address": {
+          "@type": "PostalAddress",
+          "streetAddress": "Adenta & Madina Market Hubs",
+          "addressLocality": "Accra",
+          "addressRegion": "Greater Accra",
+          "addressCountry": "GH"
+        },
+        "priceRange": "GH₵",
+        "currenciesAccepted": "GHS",
+        "paymentAccepted": "Cash, Mobile Money",
+        "openingHours": "Mo-Sa 06:00-18:00"
+      },
+      {
+        "@type": "WebApplication",
+        "@id": "https://afafresheggs.com/#app",
+        "name": "AFA Fresh Eggs Manager",
+        "applicationCategory": "BusinessApplication",
+        "operatingSystem": "All (Web, iOS, Android)",
+        "description": "Progressive Web Application for egg crate inventory, farm collections, instant receipt printing, WhatsApp customer statements, and offline support.",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "GHS"
+        }
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <div id="root"></div>

@@ -1,45 +1,45 @@
-import React, { useState } from 'react';
-import { PriceItem } from '../types';
+import React, { useState, useEffect } from 'react';
+import { useApp } from '../context/AppContext';
 import { SHOPS } from '../constants';
 
 interface StockReconciliationModalProps {
-  prices: PriceItem[];
-  shopStockQty: (shop: string, pid: string) => number;
-  onApplyVariance: (shop: string, pid: string, diff: number) => void;
   onClose: () => void;
-  initialShop?: string;
 }
 
-export const StockReconciliationModal: React.FC<StockReconciliationModalProps> = ({
-  prices,
-  shopStockQty,
-  onApplyVariance,
-  onClose,
-  initialShop
-}) => {
-  const [selectedShop, setSelectedShop] = useState(initialShop || SHOPS[0]);
-  const [actualCounts, setActualCounts] = useState<Record<string, string>>({});
+export const StockReconciliationModal: React.FC<StockReconciliationModalProps> = ({ onClose }) => {
+  const { appState, adjustStock, can, myShop } = useApp();
+  const prices = appState.prices;
+  const attendantShop = myShop();
 
-  const handleApplyAll = () => {
-    let appliedCount = 0;
-    prices.forEach(p => {
-      const actualStr = actualCounts[p.id];
-      if (actualStr !== undefined && actualStr.trim() !== '') {
-        const actual = parseFloat(actualStr) || 0;
-        const system = shopStockQty(selectedShop, p.id);
-        const diff = actual - system;
-        if (Math.abs(diff) > 0.001) {
-          onApplyVariance(selectedShop, p.id, diff);
-          appliedCount++;
-        }
-      }
+  const [type, setType] = useState<'move' | 'loss'>('move');
+  const [pid, setPid] = useState(prices[0]?.id || '');
+  const [fromShop, setFromShop] = useState<string>(attendantShop || SHOPS[0]);
+  const [toShop, setToShop] = useState<string>(SHOPS[1] || SHOPS[0]);
+  const [qty, setQty] = useState('');
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const numQty = parseInt(qty, 10);
+    if (!numQty || numQty <= 0) return;
+
+    const ok = adjustStock({
+      type,
+      pid,
+      fromShop,
+      toShop,
+      qty: numQty
     });
 
-    if (appliedCount > 0) {
-      alert(`Applied reconciliation for ${appliedCount} item(s) in ${selectedShop}.`);
+    if (ok) {
       onClose();
-    } else {
-      alert('No differences found to reconcile.');
     }
   };
 
@@ -47,14 +47,14 @@ export const StockReconciliationModal: React.FC<StockReconciliationModalProps> =
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="End of day stock audit modal"
+      aria-labelledby="stock-modal-title"
       style={{
         position: 'fixed',
         inset: 0,
-        backgroundColor: 'rgba(0, 0, 0, 0.7)',
+        backgroundColor: 'rgba(0, 0, 0, 0.72)',
         backdropFilter: 'blur(8px)',
         WebkitBackdropFilter: 'blur(8px)',
-        zIndex: 1000,
+        zIndex: 1100,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -65,85 +65,104 @@ export const StockReconciliationModal: React.FC<StockReconciliationModalProps> =
       <div
         className="c"
         style={{
-          maxWidth: '460px',
+          maxWidth: '440px',
           width: '100%',
-          maxHeight: '85vh',
-          overflowY: 'auto',
           margin: 0,
-          background: 'var(--cd)'
+          background: 'var(--cd)',
+          borderRadius: '18px',
+          padding: '20px'
         }}
         onClick={e => e.stopPropagation()}
       >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <div>
-            <h2 style={{ margin: 0 }}>📋 End-of-Day Stock Audit</h2>
-            <small style={{ color: 'var(--mu)', display: 'block', fontSize: '13px' }}>
-              Reconcile physical crates counted on the floor
+            <h2 id="stock-modal-title" style={{ margin: 0, fontSize: '18px' }}>
+              📦 Stock Adjustment
+            </h2>
+            <small style={{ color: 'var(--mu)', fontSize: '12px' }}>
+              Transfer between shops or record breakage
             </small>
           </div>
-          <button type="button" className="s" onClick={onClose} style={{ fontSize: '18px', padding: '2px 8px' }}>
+          <button
+            type="button"
+            className="s"
+            onClick={onClose}
+            aria-label="Close dialog"
+            style={{ fontSize: '18px', padding: '4px 10px', minHeight: 'auto' }}
+          >
             ×
           </button>
         </div>
 
-        <label style={{ marginBottom: '14px' }}>
-          Audit for Shop
-          <select value={selectedShop} onChange={e => setSelectedShop(e.target.value)}>
-            {SHOPS.map(s => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </label>
+        <form onSubmit={handleSubmit}>
+          <label>
+            Action Type
+            <select value={type} onChange={e => setType(e.target.value as any)}>
+              <option value="move">🚚 Shop-to-Shop Transfer</option>
+              <option value="loss">💔 Breakage / Spoilage</option>
+            </select>
+          </label>
 
-        <div style={{ maxHeight: '280px', overflowY: 'auto', marginBottom: '16px' }}>
-          {prices.map(p => {
-            const system = shopStockQty(selectedShop, p.id);
-            const actualInput = actualCounts[p.id] ?? '';
-            const actual = actualInput !== '' ? parseFloat(actualInput) || 0 : system;
-            const diff = actual - system;
+          <label>
+            Egg Size / Batch
+            <select value={pid} onChange={e => setPid(e.target.value)}>
+              {prices.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.farm} · {p.item}
+                </option>
+              ))}
+            </select>
+          </label>
 
-            return (
-              <div key={p.id} style={{ padding: '10px 0', borderTop: '1px solid var(--bd)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <b>{p.farm} · {p.item}</b>
-                  <span>System: <b>{system}</b></span>
-                </div>
-                <div className="r" style={{ gridTemplateColumns: '1fr auto', alignItems: 'center', gap: '8px' }}>
-                  <input
-                    type="number"
-                    inputMode="decimal"
-                    placeholder={`Physical count (current: ${system})`}
-                    value={actualInput}
-                    onChange={e => setActualCounts({ ...actualCounts, [p.id]: e.target.value })}
-                    style={{ margin: 0 }}
-                  />
-                  <span
-                    style={{
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      color: diff < 0 ? '#D32F2F' : diff > 0 ? '#1F5E3B' : 'var(--mu)',
-                      minWidth: '65px',
-                      textAlign: 'right'
-                    }}
-                  >
-                    {diff === 0 ? 'Match' : `${diff > 0 ? '+' : ''}${Math.round(diff * 100) / 100} crates`}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+          <div className="r">
+            <label>
+              From Shop
+              {attendantShop ? (
+                <input value={attendantShop} readOnly style={{ background: 'var(--bg)', color: 'var(--mu)' }} />
+              ) : (
+                <select value={fromShop} onChange={e => setFromShop(e.target.value)}>
+                  {SHOPS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
+            </label>
 
-        <button type="button" onClick={handleApplyAll} style={{ width: '100%', marginBottom: '8px' }}>
-          Confirm & Reconcile Discrepancies
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          style={{ width: '100%', background: 'var(--bd)', color: 'var(--tx)', fontSize: '13px', padding: '8px' }}
-        >
-          Cancel
-        </button>
+            {type === 'move' && (
+              <label>
+                To Shop
+                <select value={toShop} onChange={e => setToShop(e.target.value)}>
+                  {SHOPS.filter(s => s !== fromShop).map(s => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+
+          <label>
+            Quantity (Crates)
+            <input
+              type="number"
+              min="1"
+              required
+              placeholder="e.g. 10"
+              value={qty}
+              onChange={e => setQty(e.target.value)}
+            />
+          </label>
+
+          <div className="r" style={{ marginTop: '14px' }}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{ background: 'var(--bg)', color: 'var(--tx)', border: '1px solid var(--bd)' }}
+            >
+              Cancel
+            </button>
+            <button type="submit">
+              Save Adjustment
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

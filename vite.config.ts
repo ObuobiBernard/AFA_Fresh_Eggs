@@ -50,6 +50,18 @@ export default defineConfig({
       }
     })
   ],
+  build: {
+    sourcemap: false,
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom'],
+          'supabase-vendor': ['@supabase/supabase-js']
+        }
+      }
+    }
+  },
   server: {
     host: '0.0.0.0',
     port: 3000,

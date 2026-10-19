@@ -5,9 +5,10 @@ import { CustomerItem } from '../types';
 import { CustomerStatementModal } from '../components/CustomerStatementModal';
 import { EditCustomerModal } from '../components/EditCustomerModal';
 import { vibrateSuccess } from '../utils/haptics';
+import { Breadcrumbs } from '../components/Breadcrumbs';
 
 export const CreditView: React.FC = () => {
-  const { appState, can, debts, addCustomer, updateCustomer, payDebt, mayDel, delItem, me } = useApp();
+  const { appState, can, debts, addCustomer, updateCustomer, payDebt, mayDel, delItem } = useApp();
 
   const [custName, setCustName] = useState('');
   const [custDialCode, setCustDialCode] = useState('+233');
@@ -33,9 +34,11 @@ export const CreditView: React.FC = () => {
     e.preventDefault();
     if (submittingCust) return;
     setSubmittingCust(true);
+
     const finalPhone = custPhone.trim()
       ? (custDialCode === '+' ? custPhone.trim() : `${custDialCode}${custPhone.trim().replace(/^0+/, '')}`)
       : '';
+
     const ok = addCustomer(custName, finalPhone);
     if (ok) {
       vibrateSuccess();
@@ -63,7 +66,6 @@ export const CreditView: React.FC = () => {
   const cleanSearch = searchTerm.trim().toLowerCase();
   const searchDigits = searchTerm.replace(/\D/g, '');
 
-  // Smart matching across both name and phone numbers
   const matchingCustomers = useMemo(() => {
     if (!cleanSearch) return [];
     return appState.customers.filter(c => {
@@ -88,10 +90,12 @@ export const CreditView: React.FC = () => {
 
   return (
     <>
-      <div className="c">
-        <h2>Customer Credit & Directory</h2>
+      <Breadcrumbs currentTab="credit" />
 
-        {/* Live Customer Search Bar */}
+      <div className="c">
+        <h1>Customer Credit Accounts &amp; Statements</h1>
+
+        {/* Live Search Bar */}
         <div style={{ marginBottom: '14px', position: 'relative' }}>
           <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
             <input
@@ -267,6 +271,7 @@ export const CreditView: React.FC = () => {
           </div>
         )}
 
+        {/* Add Customer Form */}
         {can('customer') && (
           <form onSubmit={handleAddCustomer} style={{ marginBottom: '14px' }}>
             <input
@@ -305,6 +310,7 @@ export const CreditView: React.FC = () => {
           </form>
         )}
 
+        {/* Outstanding Debts list */}
         <h3>Outstanding Customer Balances ({filteredDebts.length})</h3>
         {filteredDebts.length > 0 ? (
           filteredDebts.map(x => {
@@ -335,52 +341,58 @@ export const CreditView: React.FC = () => {
                 </div>
 
                 <div style={{ display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
+                  {can('pay') && (
+                    <>
+                      <input
+                        type="number"
+                        inputMode="decimal"
+                        placeholder="Pay GH₵"
+                        value={currentPayVal}
+                        onChange={e =>
+                          setPayInputs(prev => ({ ...prev, [x.id]: e.target.value }))
+                        }
+                        style={{ width: '110px', margin: 0, padding: '4px 8px', fontSize: '12px' }}
+                      />
+                      <button
+                        type="button"
+                        className="s"
+                        onClick={() => {
+                          const val = parseFloat(currentPayVal);
+                          if (val > 0) {
+                            handleRecordPayment(x.id, val);
+                            setPayInputs(prev => ({ ...prev, [x.id]: '' }));
+                          }
+                        }}
+                        style={{ padding: '4px 10px', fontSize: '12px', minHeight: 'auto' }}
+                      >
+                        Record
+                      </button>
+                    </>
+                  )}
+
                   {custObj && (
                     <button
                       type="button"
                       className="s"
-                      style={{ color: 'var(--tx)', border: '1px solid var(--bd)', background: 'var(--bg)', padding: '5px 10px', fontSize: '12px' }}
+                      style={{ background: 'var(--bg)', color: 'var(--tx)', border: '1px solid var(--bd)', padding: '4px 8px', fontSize: '11px', minHeight: 'auto' }}
                       onClick={() => setStatementCustomer(custObj)}
                     >
-                      📄 Statement
+                      Statement
                     </button>
                   )}
+
                   {waLink && (
                     <a
                       className="btn-link btn-wa"
-                      style={{ padding: '5px 10px', fontSize: '12px', width: 'auto' }}
+                      style={{ padding: '4px 8px', fontSize: '11px', width: 'auto', minHeight: 'auto' }}
                       href={waLink}
                       target="_blank"
                       rel="noopener noreferrer"
                     >
-                      💬 WhatsApp
+                      Remind WA
                     </a>
                   )}
                 </div>
-
-                {can('pay') && (
-                  <div className="r" style={{ marginTop: '8px', gridTemplateColumns: '1fr auto' }}>
-                    <input
-                      type="number"
-                      inputMode="decimal"
-                      placeholder="Amount"
-                      value={currentPayVal}
-                      onChange={e => setPayInputs({ ...payInputs, [x.id]: e.target.value })}
-                      style={{ margin: 0 }}
-                    />
-                    <button
-                      type="button"
-                      style={{ width: 'auto' }}
-                      onClick={() => {
-                        const amt = parseFloat(currentPayVal) || 0;
-                        handleRecordPayment(x.id, amt);
-                        setPayInputs({ ...payInputs, [x.id]: '' });
-                      }}
-                    >
-                      Record Payment
-                    </button>
-                  </div>
-                )}
               </div>
             );
           })
@@ -391,40 +403,7 @@ export const CreditView: React.FC = () => {
         )}
       </div>
 
-      {/* Debt payment history with undo/delete */}
-      {(can('del') || me.role === 'data_entry') && (
-        <div className="c">
-          <h3>Recent Debt Payments</h3>
-          {appState.pay.length > 0 ? (
-            appState.pay.slice(-8).reverse().map(p => {
-              const cObj = appState.customers.find(c => c.id === p.cust_id);
-              return (
-                <div className="l" key={p.id}>
-                  <div>
-                    <b>{cObj ? cObj.name : 'Customer'}</b>
-                    <small>{p.date}</small>
-                  </div>
-                  <b>{gh(p.amt)}</b>
-                  {mayDel('pay', p) && (
-                    <button
-                      type="button"
-                      className="s"
-                      onClick={() => delItem('pay', p.id)}
-                      title="Delete payment"
-                    >
-                      ×
-                    </button>
-                  )}
-                </div>
-              );
-            })
-          ) : (
-            <small style={{ color: 'var(--mu)' }}>No debt payments recorded yet.</small>
-          )}
-        </div>
-      )}
-
-      {/* Full customer directory with Search & Statement shortcuts */}
+      {/* Full Customer Directory */}
       <details className="c" open={Boolean(cleanSearch)}>
         <summary>👥 All Customers Directory ({filteredCustomers.length})</summary>
         <div>

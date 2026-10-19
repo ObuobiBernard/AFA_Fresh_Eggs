@@ -15,7 +15,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
 }) => {
   const [name, setName] = useState(customer.name);
 
-  // Parse existing phone for dial code
   const initialPhone = customer.phone || '';
   const matchedCountry = COUNTRY_DIAL_CODES.find(
     c => c.code !== '+' && initialPhone.startsWith(c.code)
@@ -33,7 +32,6 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  // Combined full phone number
   const fullPhone = dialCode === '+'
     ? localNumber.trim()
     : `${dialCode}${localNumber.trim().replace(/^0+/, '')}`;
@@ -97,7 +95,7 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
             className="s"
             onClick={onClose}
             aria-label="Close edit customer dialog"
-            style={{ fontSize: '18px', padding: '4px 10px' }}
+            style={{ fontSize: '18px', padding: '4px 10px', minHeight: 'auto' }}
           >
             ×
           </button>
