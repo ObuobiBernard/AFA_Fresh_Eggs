@@ -3,22 +3,22 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
-  base: './',
+  base: '/',
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'icon.svg', 'assets/bernard.jpg'],
       manifest: {
-        id: './',
+        id: '/',
         name: 'AFA Fresh Eggs Manager',
         short_name: 'AFA Eggs',
         description: 'Daily egg sales, farm collections, customer credit and stock manager.',
         theme_color: '#1F5E3B',
         background_color: '#FFF9EC',
         display: 'standalone',
-        start_url: './',
-        scope: './',
+        start_url: '/',
+        scope: '/',
         icons: [
           {
             src: 'pwa-192x192.png',
@@ -66,7 +66,6 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3000,
     headers: {
-      'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'strict-origin-when-cross-origin'
     }
   }
