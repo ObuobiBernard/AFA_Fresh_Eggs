@@ -4,12 +4,13 @@ import { td, gh } from '../constants';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 
 export const CostsView: React.FC = () => {
-  const { appState, can, scopeRows, addCost, mayDel, delItem } = useApp();
+  const { appState, can, scopeRows, addCost, mayDel, delItem, refreshFromCloud } = useApp();
 
   const [date, setDate] = useState(td());
   const [amt, setAmt] = useState('');
   const [descr, setDescr] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   if (!can('cost')) {
     return (
@@ -34,7 +35,13 @@ export const CostsView: React.FC = () => {
     setTimeout(() => setSubmitting(false), 400);
   };
 
-  const recentCosts = scopeRows(appState.costs).slice(-8).reverse();
+  const handleSync = async () => {
+    setSyncing(true);
+    await refreshFromCloud();
+    setSyncing(false);
+  };
+
+  const recentCosts = scopeRows(appState.costs).slice(-12).reverse();
 
   return (
     <>
@@ -71,8 +78,28 @@ export const CostsView: React.FC = () => {
         </button>
       </form>
 
-      <div className="c">
-        <h3>Recent expenses</h3>
+      {/* Recent expenses (Collapsible Dropdown) */}
+      <details className="c" open>
+        <summary style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>⛽ Recent Operating Expenses ({recentCosts.length})</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              type="button"
+              className="s"
+              onClick={e => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleSync();
+              }}
+              disabled={syncing}
+              title="Refresh expenses from Supabase database"
+              style={{ fontSize: '11px', padding: '3px 8px', minHeight: 'auto' }}
+            >
+              {syncing ? 'Syncing...' : '🔄 Sync DB'}
+            </button>
+            <span className="summary-chevron">▼</span>
+          </div>
+        </summary>
         {recentCosts.length > 0 ? (
           recentCosts.map(c => (
             <div className="l" key={c.id}>
@@ -80,23 +107,35 @@ export const CostsView: React.FC = () => {
                 <b>{c.descr}</b>
                 <small>{c.date}</small>
               </div>
-              <b>{gh(c.amt)}</b>
-              {mayDel('costs', c) && (
-                <button
-                  type="button"
-                  className="s"
-                  onClick={() => delItem('costs', c.id)}
-                  title="Delete cost"
-                >
-                  ×
-                </button>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <b>{gh(c.amt)}</b>
+                {mayDel('costs', c) && (
+                  <button
+                    type="button"
+                    className="s"
+                    onClick={() => delItem('costs', c.id)}
+                    title={`Delete expense: ${c.descr}`}
+                    aria-label={`Delete expense ${c.descr}`}
+                    style={{
+                      marginLeft: '4px',
+                      padding: '4px 8px',
+                      fontSize: '11px',
+                      color: 'var(--rd)',
+                      borderColor: 'rgba(239, 68, 68, 0.35)',
+                      background: 'var(--bg)',
+                      fontWeight: 600
+                    }}
+                  >
+                    🗑️ Delete
+                  </button>
+                )}
+              </div>
             </div>
           ))
         ) : (
-          <small style={{ color: 'var(--mu)' }}>No expenses yet.</small>
+          <small style={{ color: 'var(--mu)' }}>No expenses recorded yet.</small>
         )}
-      </div>
+      </details>
     </>
   );
 };

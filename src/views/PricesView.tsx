@@ -85,8 +85,12 @@ export const PricesView: React.FC = () => {
         </button>
       </form>
 
-      <div className="c">
-        <h2>Price list</h2>
+      {/* Configured Price List (Collapsible Dropdown) */}
+      <details className="c" open>
+        <summary>
+          <span>🏷️ Configured Price List ({appState.prices.length})</span>
+          <span className="summary-chevron">▼</span>
+        </summary>
         {appState.prices.length > 0 ? (
           appState.prices.map(p => (
             <div key={p.id} style={{ padding: '10px 0', borderTop: '1px solid var(--bd)' }}>
@@ -96,9 +100,17 @@ export const PricesView: React.FC = () => {
                   type="button"
                   className="s"
                   onClick={() => delPrice(p.id)}
-                  title="Delete price"
+                  title={`Delete rate for ${p.farm} ${p.item}`}
+                  style={{
+                    color: 'var(--rd)',
+                    borderColor: 'rgba(239, 68, 68, 0.35)',
+                    background: 'var(--bg)',
+                    padding: '3px 8px',
+                    fontSize: '11px',
+                    fontWeight: 600
+                  }}
                 >
-                  ×
+                  🗑️ Delete
                 </button>
               </div>
               <div className="r">
@@ -126,7 +138,7 @@ export const PricesView: React.FC = () => {
         ) : (
           <small style={{ color: 'var(--mu)' }}>No prices configured yet.</small>
         )}
-      </div>
+      </details>
     </>
   );
 };

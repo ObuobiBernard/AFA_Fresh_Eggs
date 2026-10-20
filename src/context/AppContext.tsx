@@ -12,7 +12,9 @@ import {
   CollectionItem,
   CostItem,
   PriceItem,
-  PaymentItem
+  PaymentItem,
+  FarmerItem,
+  DeleteTarget
 } from '../types';
 import {
   PERMS,
@@ -44,6 +46,15 @@ interface DebtRecord {
   due: string;
 }
 
+export interface FarmBalanceRecord {
+  farmName: string;
+  farmer?: FarmerItem;
+  totalCrates: number;
+  totalCost: number;
+  totalPaid: number;
+  balanceDue: number;
+}
+
 interface AppContextValue {
   me: UserProfile;
   appState: AppStateData;
@@ -72,6 +83,13 @@ interface AppContextValue {
   stock: () => { m: Record<string, number>; L: Record<string, string> };
   shopStockQty: (shop: string, pid: string) => number;
   debts: () => DebtRecord[];
+  // Farmer Bank Accounts & Payouts
+  farmers: FarmerItem[];
+  addFarmer: (data: Omit<FarmerItem, 'id'>) => boolean;
+  updateFarmer: (id: string, data: Partial<FarmerItem>) => boolean;
+  delFarmer: (id: string) => void;
+  farmerBalances: () => FarmBalanceRecord[];
+  payFarmerDirect: (farmName: string, amt: number, method?: string) => boolean;
   // Actions
   addCol: (data: { pid: string; qty: number; buy: number; shop: string; date?: string; paidAmt: number; transport: number }) => boolean;
   payFarmer: (colId: string, amt: number) => void;
@@ -85,6 +103,11 @@ interface AppContextValue {
   updatePrice: (id: string, field: 'buy' | 'sell', val: number) => void;
   delPrice: (id: string) => void;
   delItem: (table: TableKey, id: string) => void;
+  deleteMember: (id: string) => void;
+  deleteTarget: DeleteTarget | null;
+  requestDelete: (target: DeleteTarget) => void;
+  cancelDelete: () => void;
+  confirmDeleteAction: () => Promise<void>;
   saveMember: (id: string, newRole: Role, newShop: string | null) => Promise<void>;
   toggleMember: (id: string, active: boolean) => Promise<void>;
   inviteMember: (email: string, role: Role, shop: string | null, name?: string) => Promise<void>;
@@ -95,6 +118,7 @@ interface AppContextValue {
   logout: () => Promise<void>;
   recheckAccess: () => Promise<void>;
   forceSync: () => Promise<void>;
+  refreshFromCloud: (forceWipeCache?: boolean) => Promise<void>;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
@@ -121,7 +145,8 @@ export function deduplicateAppState(state: AppStateData): { cleaned: AppStateDat
     prices: [],
     sales: [],
     col: [],
-    pay: []
+    pay: [],
+    farmers: []
   };
 
   // 1. Deduplicate Customers by normalized Name AND normalized Phone
@@ -217,6 +242,19 @@ export function deduplicateAppState(state: AppStateData): { cleaned: AppStateDat
     }
   }
 
+  // 6. Deduplicate Farmers by normalized Name
+  const seenFarmerNames = new Set<string>();
+  const uniqueFarmers: FarmerItem[] = [];
+  for (const f of state.farmers || []) {
+    const key = (f.name || '').trim().toLowerCase();
+    if (seenFarmerNames.has(key)) {
+      removedIdsByTable.farmers.push(f.id);
+    } else {
+      if (key) seenFarmerNames.add(key);
+      uniqueFarmers.push(f);
+    }
+  }
+
   return {
     cleaned: {
       ...state,
@@ -225,10 +263,62 @@ export function deduplicateAppState(state: AppStateData): { cleaned: AppStateDat
       prices: uniquePrices,
       col: uniqueCol,
       sales: uniqueSales,
-      pay: remappedPay
+      pay: remappedPay,
+      farmers: uniqueFarmers
     },
     removedIdsByTable
   };
+}
+
+function getDeletedIds(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem('afa_deleted_ids');
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function recordDeletedId(table: string, id: string) {
+  removePendingCreation(table, id);
+  const all = getDeletedIds();
+  all[table] = all[table] || [];
+  if (!all[table].includes(id)) {
+    all[table].push(id);
+    try {
+      localStorage.setItem('afa_deleted_ids', JSON.stringify(all));
+    } catch {}
+  }
+}
+
+function getPendingCreations(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem('afa_pending_creations');
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function addPendingCreation(table: string, id: string) {
+  const all = getPendingCreations();
+  all[table] = all[table] || [];
+  if (!all[table].includes(id)) {
+    all[table].push(id);
+    try {
+      localStorage.setItem('afa_pending_creations', JSON.stringify(all));
+    } catch {}
+  }
+}
+
+function removePendingCreation(table: string, id: string) {
+  const all = getPendingCreations();
+  if (all[table]) {
+    all[table] = all[table].filter(x => x !== id);
+    try {
+      localStorage.setItem('afa_pending_creations', JSON.stringify(all));
+    } catch {}
+  }
 }
 
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -257,6 +347,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           pay: parsed.pay || [],
           costs: parsed.costs || [],
           customers: parsed.customers || [],
+          farmers: parsed.farmers || [],
           profiles: parsed.profiles || []
         });
         return cleaned;
@@ -272,6 +363,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const [showSplash, setShowSplash] = useState<boolean>(true);
   const [legalTab, setLegalTab] = useState<LegalTab | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     try {
@@ -337,6 +429,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (newState.customers.length > 0) {
         const { error } = await sbClient.from('customers').upsert(newState.customers);
         if (error) console.warn('Supabase customers upsert notice:', error.message);
+      }
+
+      if (newState.farmers && newState.farmers.length > 0) {
+        const { error } = await sbClient.from('farmers').upsert(newState.farmers);
+        if (error) console.warn('Supabase farmers upsert notice:', error.message);
       }
 
       // Step 2: Upsert collections
@@ -426,7 +523,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [persistState]);
 
   // Load data from Supabase with automatic deduplication
-  const loadRemoteData = useCallback(async (forcedRole?: string) => {
+  const loadRemoteData = useCallback(async (forcedRole?: string, forceWipeCache?: boolean) => {
     if (!sbClient || !navigator.onLine) return;
     try {
       setSyncStatus('saving');
@@ -457,32 +554,68 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       setAppState(prev => {
+        const locallyDeleted = getDeletedIds();
+        const pendingCreations = getPendingCreations();
+        const baseSource = forceWipeCache ? EMPTY_APP_STATE : prev;
+
         const merged: AppStateData = {
-          prices: remoteDataMap.prices || prev.prices,
-          col: remoteDataMap.col || prev.col,
-          sales: remoteDataMap.sales || prev.sales,
-          pay: remoteDataMap.pay || prev.pay,
-          costs: remoteDataMap.costs || prev.costs,
-          customers: remoteDataMap.customers || prev.customers,
-          profiles: teamProfiles || prev.profiles
+          prices: remoteDataMap.prices
+            ? remoteDataMap.prices.filter(r => !(locallyDeleted.prices || []).includes(r.id))
+            : baseSource.prices,
+          col: remoteDataMap.col
+            ? remoteDataMap.col.filter(r => !(locallyDeleted.col || []).includes(r.id))
+            : baseSource.col,
+          sales: remoteDataMap.sales
+            ? remoteDataMap.sales.filter(r => !(locallyDeleted.sales || []).includes(r.id))
+            : baseSource.sales,
+          pay: remoteDataMap.pay
+            ? remoteDataMap.pay.filter(r => !(locallyDeleted.pay || []).includes(r.id))
+            : baseSource.pay,
+          costs: remoteDataMap.costs
+            ? remoteDataMap.costs.filter(r => !(locallyDeleted.costs || []).includes(r.id))
+            : baseSource.costs,
+          customers: remoteDataMap.customers
+            ? remoteDataMap.customers.filter(r => !(locallyDeleted.customers || []).includes(r.id))
+            : baseSource.customers,
+          farmers: remoteDataMap.farmers
+            ? remoteDataMap.farmers.filter(r => !(locallyDeleted.farmers || []).includes(r.id))
+            : (baseSource.farmers || []),
+          profiles: teamProfiles || baseSource.profiles
         };
 
-        // Merge any local rows not yet in remote
-        for (const [k] of Object.entries(TB_MAP)) {
-          const remoteList = remoteDataMap[k];
-          if (remoteList) {
-            const remoteIds = new Set(remoteList.map((r: any) => r.id));
-            const unsynced = ((prev as any)[k] || []).filter((r: any) => !remoteIds.has(r.id));
-            (merged as any)[k] = [...remoteList, ...unsynced];
+        if (!forceWipeCache) {
+          // Retain local rows ONLY IF they were explicitly created offline and have pending sync!
+          // If a row is NOT in pendingCreations and NOT in remote, it was DELETED in the database!
+          // We DO NOT restore database deletions!
+          for (const [k] of Object.entries(TB_MAP)) {
+            const remoteList = remoteDataMap[k];
+            if (remoteList) {
+              const remoteIds = new Set(remoteList.map((r: any) => r.id));
+              const tablePending = new Set(pendingCreations[k] || []);
+              const unsynced = ((baseSource as any)[k] || []).filter(
+                (r: any) => !remoteIds.has(r.id) && tablePending.has(r.id)
+              );
+              if (unsynced.length > 0) {
+                (merged as any)[k] = [...((merged as any)[k] || []), ...unsynced];
+              }
+            }
           }
         }
 
         const { cleaned, removedIdsByTable } = deduplicateAppState(merged);
 
-        // Permanently purge any removed duplicate IDs from Supabase
+        // Permanently purge any removed duplicate IDs or recorded deleted IDs from Supabase
         if (sbClient && navigator.onLine) {
           Object.entries(removedIdsByTable).forEach(([tblKey, ids]) => {
             const actualTable = TB_MAP[tblKey];
+            if (actualTable && ids.length > 0) {
+              sbClient.from(actualTable).delete().in('id', ids).then(undefined, console.warn);
+            }
+          });
+
+          // Also purge any locally deleted IDs that might still exist on the server
+          Object.entries(locallyDeleted).forEach(([tblKey, ids]) => {
+            const actualTable = tblKey === 'profiles' ? 'profiles' : TB_MAP[tblKey];
             if (actualTable && ids.length > 0) {
               sbClient.from(actualTable).delete().in('id', ids).then(undefined, console.warn);
             }
@@ -617,14 +750,82 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, [myShop]);
 
   const mayDel = useCallback((table: TableKey, row: any): boolean => {
+    if (table === 'customers') {
+      return can('del') || can('customer');
+    }
+    if (table === 'costs') {
+      return can('del') || can('cost') || (can('delOwn') && (!row.created_by || row.created_by === me.id));
+    }
     if (!can('del')) {
-      if (can('delOwn') && row.created_by && row.created_by === me.id) {
+      if (can('delOwn') && (!row.created_by || row.created_by === me.id)) {
         return true;
       }
       return false;
     }
     return true;
   }, [can, me.id]);
+
+  const executeDelete = useCallback(async (table: TableKey | 'profiles', id: string): Promise<boolean> => {
+    recordDeletedId(table, id);
+
+    updateState(prev => {
+      if (table === 'profiles') {
+        const nextProfiles = prev.profiles.filter(p => p.id !== id);
+        return { ...prev, profiles: nextProfiles };
+      }
+      if (table === 'customers') {
+        const nextCustomers = prev.customers.filter(c => c.id !== id);
+        // Clear foreign key references in local state
+        const nextSales = prev.sales.map(s => (s.cust_id === id ? { ...s, cust_id: null } : s));
+        const nextPay = prev.pay.filter(p => p.cust_id !== id);
+        return {
+          ...prev,
+          customers: nextCustomers,
+          sales: nextSales,
+          pay: nextPay
+        };
+      }
+      return {
+        ...prev,
+        [table]: ((prev as any)[table] || []).filter((x: any) => x.id !== id)
+      };
+    });
+
+    if (sbClient && navigator.onLine) {
+      try {
+        const actualTable = table === 'profiles' ? 'profiles' : TB_MAP[table];
+        if (actualTable) {
+          const { error } = await sbClient.from(actualTable).delete().eq('id', id);
+          if (error) {
+            console.warn(`Supabase delete from ${actualTable} notice:`, error.message);
+          }
+        }
+      } catch (e: any) {
+        console.warn(`Supabase delete exception for ${table}:`, e);
+      }
+    }
+    return true;
+  }, [updateState]);
+
+  const requestDelete = useCallback((target: DeleteTarget) => {
+    setDeleteTarget(target);
+  }, []);
+
+  const cancelDelete = useCallback(() => {
+    setDeleteTarget(null);
+  }, []);
+
+  const confirmDeleteAction = useCallback(async () => {
+    if (!deleteTarget) return;
+    const { table, id, name, typeLabel, onSuccess } = deleteTarget;
+    setDeleteTarget(null);
+
+    await executeDelete(table, id);
+    if (onSuccess) {
+      onSuccess();
+    }
+    toast(`Deleted ${typeLabel || 'entry'} "${name}"`);
+  }, [deleteTarget, executeDelete, toast]);
 
   // Inventory calculation
   const stock = useCallback((): { m: Record<string, number>; L: Record<string, string> } => {
@@ -691,6 +892,202 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       .filter(d => d.bal > 0)
       .sort((a, b) => b.bal - a.bal);
   }, [appState.customers, appState.sales, appState.pay]);
+
+  // Farmer balances calculation
+  const farmerBalances = useCallback((): FarmBalanceRecord[] => {
+    const farmNamesSet = new Set<string>();
+
+    appState.prices.forEach(p => {
+      if (p.farm && p.farm.trim()) farmNamesSet.add(p.farm.trim());
+    });
+
+    appState.col.forEach(c => {
+      const matchedPrice = appState.prices.find(p => p.id === c.pid);
+      if (matchedPrice && matchedPrice.farm && matchedPrice.farm.trim()) {
+        farmNamesSet.add(matchedPrice.farm.trim());
+      } else if (c.lbl && c.lbl.includes(' · ')) {
+        const parsed = c.lbl.split(' · ')[0].trim();
+        if (parsed) farmNamesSet.add(parsed);
+      }
+    });
+
+    (appState.farmers || []).forEach(f => {
+      if (f.name && f.name.trim()) farmNamesSet.add(f.name.trim());
+    });
+
+    const results: FarmBalanceRecord[] = Array.from(farmNamesSet).map(farmName => {
+      const normFarm = farmName.toLowerCase();
+      const farmer = (appState.farmers || []).find(
+        f => f.name.trim().toLowerCase() === normFarm
+      );
+
+      const farmCols = appState.col.filter(c => {
+        const matchedPrice = appState.prices.find(p => p.id === c.pid);
+        if (matchedPrice && matchedPrice.farm && matchedPrice.farm.trim().toLowerCase() === normFarm) {
+          return true;
+        }
+        if (c.lbl && c.lbl.includes(' · ') && c.lbl.split(' · ')[0].trim().toLowerCase() === normFarm) {
+          return true;
+        }
+        return false;
+      });
+
+      const totalCrates = sum(farmCols, c => Number(c.qty) || 0);
+      const totalCost = sum(farmCols, c => (Number(c.qty) || 0) * (Number(c.buy) || 0));
+      const totalPaid = sum(farmCols, c => Number(c.paid_amt) || 0);
+      const balanceDue = Math.max(0, Math.round((totalCost - totalPaid) * 100) / 100);
+
+      return {
+        farmName,
+        farmer,
+        totalCrates,
+        totalCost,
+        totalPaid,
+        balanceDue
+      };
+    });
+
+    return results.sort((a, b) => {
+      if (b.balanceDue !== a.balanceDue) return b.balanceDue - a.balanceDue;
+      return a.farmName.localeCompare(b.farmName);
+    });
+  }, [appState.prices, appState.col, appState.farmers]);
+
+  const addFarmer = useCallback((data: Omit<FarmerItem, 'id'>) => {
+    const cleanName = sanitizeText(data.name, 100);
+    if (!cleanName) {
+      toast('Enter farm or farmer name');
+      return false;
+    }
+
+    let duplicate = false;
+    updateState(prev => {
+      const exists = (prev.farmers || []).some(
+        f => f.name.trim().toLowerCase() === cleanName.toLowerCase()
+      );
+      if (exists) {
+        duplicate = true;
+        return prev;
+      }
+
+      const newFarmer: FarmerItem = {
+        id: uid(),
+        name: cleanName,
+        phone: sanitizeText(data.phone, 30),
+        bank_name: sanitizeText(data.bank_name, 80) || 'Guaranty Trust Bank (GTBank)',
+        account_number: sanitizeText(data.account_number, 40),
+        account_name: sanitizeText(data.account_name, 100),
+        branch: sanitizeText(data.branch, 60),
+        notes: sanitizeText(data.notes, 200)
+      };
+
+      return {
+        ...prev,
+        farmers: [...(prev.farmers || []), newFarmer]
+      };
+    });
+
+    if (duplicate) {
+      toast(`Farmer "${cleanName}" already has an account`);
+      return false;
+    }
+
+    toast('Saved farmer account details');
+    return true;
+  }, [updateState, toast]);
+
+  const updateFarmer = useCallback((id: string, data: Partial<FarmerItem>) => {
+    updateState(prev => ({
+      ...prev,
+      farmers: (prev.farmers || []).map(f => {
+        if (f.id === id) {
+          return {
+            ...f,
+            ...data,
+            name: data.name !== undefined ? sanitizeText(data.name, 100) : f.name,
+            phone: data.phone !== undefined ? sanitizeText(data.phone, 30) : f.phone,
+            bank_name: data.bank_name !== undefined ? sanitizeText(data.bank_name, 80) : f.bank_name,
+            account_number: data.account_number !== undefined ? sanitizeText(data.account_number, 40) : f.account_number,
+            account_name: data.account_name !== undefined ? sanitizeText(data.account_name, 100) : f.account_name,
+            branch: data.branch !== undefined ? sanitizeText(data.branch, 60) : f.branch,
+            notes: data.notes !== undefined ? sanitizeText(data.notes, 200) : f.notes
+          };
+        }
+        return f;
+      })
+    }));
+
+    toast('Updated farmer bank details');
+    return true;
+  }, [updateState, toast]);
+
+  const delFarmer = useCallback((id: string) => {
+    const farmer = (appState.farmers || []).find(f => f.id === id);
+    const label = farmer ? farmer.name : 'farmer';
+    requestDelete({
+      table: 'farmers',
+      id,
+      name: label,
+      typeLabel: 'farmer profile'
+    });
+  }, [appState.farmers, requestDelete]);
+
+  const payFarmerDirect = useCallback((farmName: string, amt: number, method = 'GTBank Transfer') => {
+    if (!can('pay') && !can('collect')) {
+      toast('You cannot record payments');
+      return false;
+    }
+    const numAmt = Math.round(Number(amt) * 100) / 100;
+    if (numAmt <= 0) {
+      toast('Enter valid payment amount');
+      return false;
+    }
+
+    const normFarm = farmName.trim().toLowerCase();
+
+    updateState(prev => {
+      let remainingToApply = numAmt;
+      const updatedCols = prev.col.map(c => {
+        const matchedPrice = prev.prices.find(p => p.id === c.pid);
+        const isThisFarm =
+          (matchedPrice && matchedPrice.farm && matchedPrice.farm.trim().toLowerCase() === normFarm) ||
+          (c.lbl && c.lbl.includes(' · ') && c.lbl.split(' · ')[0].trim().toLowerCase() === normFarm);
+
+        if (!isThisFarm || remainingToApply <= 0) return c;
+
+        const totalCost = (Number(c.qty) || 0) * (Number(c.buy) || 0);
+        const currentPaid = Number(c.paid_amt) || 0;
+        const dueOnCol = Math.max(0, totalCost - currentPaid);
+
+        if (dueOnCol <= 0) return c;
+
+        const payThisCol = Math.min(remainingToApply, dueOnCol);
+        remainingToApply -= payThisCol;
+
+        return {
+          ...c,
+          paid_amt: Math.round((currentPaid + payThisCol) * 100) / 100
+        };
+      });
+
+      const newCost: CostItem = {
+        id: uid(),
+        date: td(),
+        descr: `Farmer Payout: ${farmName} (${method})`,
+        amt: numAmt,
+        created_by: me.id
+      };
+
+      return {
+        ...prev,
+        col: updatedCols,
+        costs: [...prev.costs, newCost]
+      };
+    });
+
+    toast(`Paid ${gh(numAmt)} to ${farmName} via ${method}`);
+    return true;
+  }, [can, me.id, updateState, toast]);
 
   // Actions
   const addCol = useCallback((data: { pid: string; qty: number; buy: number; shop: string; date?: string; paidAmt: number; transport: number }) => {
@@ -931,8 +1328,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const newCust: CustomerItem = {
         id: uid(),
         name: cleanName,
-        phone: cleanPhone
+        phone: cleanPhone,
+        created_by: me.id
       };
+      addPendingCreation('customers', newCust.id);
 
       return {
         ...prev,
@@ -1067,6 +1466,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         amt: numAmt,
         created_by: me.id
       };
+      addPendingCreation('costs', newCost.id);
       return {
         ...prev,
         costs: [...prev.costs, newCost]
@@ -1144,16 +1544,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       toast('You cannot change prices');
       return;
     }
-    if (!window.confirm('Delete price?')) return;
-    updateState(prev => ({
-      ...prev,
-      prices: prev.prices.filter(p => p.id !== id)
-    }));
-    if (sbClient && navigator.onLine) {
-      sbClient.from('prices').delete().eq('id', id).then(undefined, console.warn);
-    }
-    toast('Price removed');
-  }, [can, updateState, toast]);
+    const price = appState.prices.find(p => p.id === id);
+    const label = price ? `${price.farm} · ${price.item}` : 'Price';
+    requestDelete({
+      table: 'prices',
+      id,
+      name: label,
+      typeLabel: 'egg price'
+    });
+  }, [can, appState.prices, requestDelete, toast]);
 
   const delItem = useCallback((table: TableKey, id: string) => {
     const row = (appState as any)[table]?.find((x: any) => x.id === id);
@@ -1162,21 +1561,43 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       toast('You do not have permission to delete this');
       return;
     }
-    if (!window.confirm('Delete this entry?')) return;
+    const label = row.name || row.descr || row.item || row.lbl || (row.qty ? `${row.qty} crates` : 'entry');
+    const typeLabel = table === 'costs'
+      ? 'expense'
+      : table === 'customers'
+      ? 'customer'
+      : table === 'col'
+      ? 'collection'
+      : table === 'sales'
+      ? 'sale'
+      : 'record';
 
-    updateState(prev => ({
-      ...prev,
-      [table]: (prev as any)[table].filter((x: any) => x.id !== id)
-    }));
+    requestDelete({
+      table,
+      id,
+      name: label,
+      typeLabel
+    });
+  }, [appState, mayDel, requestDelete, toast]);
 
-    if (sbClient && navigator.onLine) {
-      const tblName = TB_MAP[table];
-      if (tblName) {
-        sbClient.from(tblName).delete().eq('id', id).then(undefined, console.warn);
-      }
+  const deleteMember = useCallback((id: string) => {
+    if (!can('team')) {
+      toast('Only the CEO can remove staff accounts');
+      return;
     }
-    toast('Deleted entry');
-  }, [appState, mayDel, updateState, toast]);
+    if (id === me.id) {
+      toast('You cannot delete your own CEO account');
+      return;
+    }
+    const member = appState.profiles.find(p => p.id === id);
+    const label = member ? (member.name || member.email) : 'team member';
+    requestDelete({
+      table: 'profiles',
+      id,
+      name: label,
+      typeLabel: 'staff account'
+    });
+  }, [can, me.id, appState.profiles, requestDelete, toast]);
 
   const saveMember = useCallback(async (id: string, newRole: Role, newShop: string | null) => {
     if (!can('team')) {
@@ -1292,10 +1713,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     toast('Exported sales CSV');
   }, [appState.sales, appState.customers, toast]);
 
+  const refreshFromCloud = useCallback(async (forceWipeCache = false) => {
+    if (forceWipeCache) {
+      try {
+        localStorage.removeItem('afa_cache');
+        localStorage.removeItem('afa_pending_creations');
+        localStorage.removeItem('afa_deleted_ids');
+      } catch {}
+    }
+    await loadRemoteData(undefined, forceWipeCache);
+    toast(forceWipeCache ? 'Local cache reset and refreshed from cloud' : 'Synchronized with cloud database');
+  }, [loadRemoteData, toast]);
+
   const forceSync = useCallback(async () => {
-    await persistState(appState);
     await loadRemoteData();
-  }, [persistState, appState, loadRemoteData]);
+    toast('Synchronized with cloud database');
+  }, [loadRemoteData, toast]);
 
   const loginWithSupabase = useCallback(async (email: string, pass: string): Promise<{ error?: string }> => {
     if (!sbClient) {
@@ -1418,6 +1851,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     stock,
     shopStockQty,
     debts,
+    farmers: appState.farmers || [],
+    addFarmer,
+    updateFarmer,
+    delFarmer,
+    farmerBalances,
+    payFarmerDirect,
     addCol,
     payFarmer,
     adjustStock,
@@ -1430,6 +1869,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updatePrice,
     delPrice,
     delItem,
+    deleteMember,
+    deleteTarget,
+    requestDelete,
+    cancelDelete,
+    confirmDeleteAction,
     saveMember,
     toggleMember,
     inviteMember,
@@ -1439,7 +1883,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loginWithSupabase,
     logout,
     recheckAccess,
-    forceSync
+    forceSync,
+    refreshFromCloud
   }), [
     me,
     appState,
@@ -1464,6 +1909,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     stock,
     shopStockQty,
     debts,
+    addFarmer,
+    updateFarmer,
+    delFarmer,
+    farmerBalances,
+    payFarmerDirect,
     addCol,
     payFarmer,
     adjustStock,
@@ -1476,6 +1926,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updatePrice,
     delPrice,
     delItem,
+    deleteMember,
+    deleteTarget,
+    requestDelete,
+    cancelDelete,
+    confirmDeleteAction,
     saveMember,
     toggleMember,
     inviteMember,
@@ -1485,7 +1940,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     loginWithSupabase,
     logout,
     recheckAccess,
-    forceSync
+    forceSync,
+    refreshFromCloud
   ]);
 
   return <AppContext.Provider value={contextValue}>{children}</AppContext.Provider>;

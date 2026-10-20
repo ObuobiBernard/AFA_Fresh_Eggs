@@ -6,12 +6,14 @@ interface EditCustomerModalProps {
   customer: CustomerItem;
   onSave: (id: string, data: { name: string; phone: string }) => boolean;
   onClose: () => void;
+  onDelete?: (id: string) => void;
 }
 
 export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
   customer,
   onSave,
-  onClose
+  onClose,
+  onDelete
 }) => {
   const [name, setName] = useState(customer.name);
 
@@ -146,15 +148,35 @@ export const EditCustomerModal: React.FC<EditCustomerModalProps> = ({
             </div>
           )}
 
-          <div className="r" style={{ marginTop: '16px' }}>
+          <div style={{ display: 'flex', gap: '8px', marginTop: '16px', alignItems: 'center' }}>
+            {onDelete && (
+              <button
+                type="button"
+                className="s"
+                onClick={() => {
+                  onClose();
+                  onDelete(customer.id);
+                }}
+                style={{
+                  background: 'var(--bg)',
+                  color: 'var(--rd)',
+                  borderColor: 'rgba(239, 68, 68, 0.35)',
+                  padding: '8px 12px'
+                }}
+                title="Delete customer permanently"
+              >
+                🗑️ Delete
+              </button>
+            )}
             <button
               type="button"
+              className="s"
               onClick={onClose}
-              style={{ background: 'var(--bg)', color: 'var(--tx)', border: '1px solid var(--bd)' }}
+              style={{ flex: 1, background: 'var(--bg)', color: 'var(--tx)', border: '1px solid var(--bd)' }}
             >
               Cancel
             </button>
-            <button type="submit">
+            <button type="submit" style={{ flex: 1.5 }}>
               Save Changes
             </button>
           </div>

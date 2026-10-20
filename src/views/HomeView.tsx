@@ -5,10 +5,12 @@ import { WeeklySalesChart } from '../components/WeeklySalesChart';
 import { StockReconciliationModal } from '../components/StockReconciliationModal';
 import { PWAInstallButton } from '../components/PWAInstallButton';
 import { Breadcrumbs } from '../components/Breadcrumbs';
+import { DatabaseSchemaModal } from '../components/DatabaseSchemaModal';
 
 export const HomeView: React.FC = () => {
   const { appState, myShop, scopeRows, stock, openLegal, backupJSON, restoreBackupJSON, exportCSV, setTab } = useApp();
   const [showReconcile, setShowReconcile] = useState(false);
+  const [showDbSchema, setShowDbSchema] = useState(false);
 
   const attendantShop = myShop();
   const week = wkRange(td());
@@ -127,9 +129,12 @@ export const HomeView: React.FC = () => {
         )}
       </div>
 
-      {/* System & Data */}
-      <div className="c">
-        <h2>⚙️ System & Backup</h2>
+      {/* System & Data (Collapsible Dropdown) */}
+      <details className="c">
+        <summary>
+          <span>⚙️ System, Backup &amp; Legal Tools</span>
+          <span className="summary-chevron">▼</span>
+        </summary>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
           <button type="button" className="s" onClick={backupJSON} style={{ flex: 1, minHeight: 'auto', padding: '8px' }}>
             💾 Backup Data
@@ -162,7 +167,15 @@ export const HomeView: React.FC = () => {
           <small style={{ color: 'var(--mu)' }}>
             AFA Fresh Eggs Enterprise · v1.0.0
           </small>
-          <div style={{ display: 'flex', gap: '6px' }}>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="s"
+              onClick={() => setShowDbSchema(true)}
+              style={{ fontSize: '11px', padding: '4px 8px', minHeight: 'auto' }}
+            >
+              🗄️ Database SQL
+            </button>
             <button
               type="button"
               className="s"
@@ -181,10 +194,14 @@ export const HomeView: React.FC = () => {
             </button>
           </div>
         </div>
-      </div>
+      </details>
 
       {showReconcile && (
         <StockReconciliationModal onClose={() => setShowReconcile(false)} />
+      )}
+
+      {showDbSchema && (
+        <DatabaseSchemaModal onClose={() => setShowDbSchema(false)} />
       )}
     </>
   );

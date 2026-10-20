@@ -71,6 +71,18 @@ export interface CustomerItem {
   id: string;
   name: string;
   phone: string;
+  created_by?: string;
+}
+
+export interface FarmerItem {
+  id: string;
+  name: string;
+  phone?: string;
+  bank_name: string;
+  account_number: string;
+  account_name: string;
+  branch?: string;
+  notes?: string;
 }
 
 export interface AppStateData {
@@ -80,7 +92,16 @@ export interface AppStateData {
   pay: PaymentItem[];
   costs: CostItem[];
   customers: CustomerItem[];
+  farmers: FarmerItem[];
   profiles: MemberProfile[];
 }
 
-export type TableKey = 'prices' | 'col' | 'sales' | 'pay' | 'costs' | 'customers';
+export type TableKey = 'prices' | 'col' | 'sales' | 'pay' | 'costs' | 'customers' | 'farmers';
+
+export interface DeleteTarget {
+  table: TableKey | 'profiles';
+  id: string;
+  name: string;
+  typeLabel?: string;
+  onSuccess?: () => void;
+}

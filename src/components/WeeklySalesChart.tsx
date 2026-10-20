@@ -1,6 +1,6 @@
 import React from 'react';
 import { SaleItem } from '../types';
-import { gh } from '../constants';
+import { gh, parseDate, localDateStr } from '../constants';
 
 interface WeeklySalesChartProps {
   sales: SaleItem[];
@@ -10,11 +10,11 @@ interface WeeklySalesChartProps {
 export const WeeklySalesChart: React.FC<WeeklySalesChartProps> = ({ sales, startDate }) => {
   const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
-  const baseDate = new Date(startDate);
+  const baseDate = parseDate(startDate);
   const dailyData = dayNames.map((day, idx) => {
     const cur = new Date(baseDate);
     cur.setDate(baseDate.getDate() + idx);
-    const dateStr = cur.toISOString().split('T')[0];
+    const dateStr = localDateStr(cur);
 
     const daySales = sales.filter(s => s.date === dateStr);
     const crates = daySales.reduce((acc, s) => acc + s.qty, 0);

@@ -5,11 +5,12 @@ import { Role } from '../types';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 
 export const TeamView: React.FC = () => {
-  const { me, appState, can, saveMember, toggleMember, inviteMember } = useApp();
+  const { me, appState, can, saveMember, toggleMember, inviteMember, deleteMember, refreshFromCloud } = useApp();
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteName, setInviteName] = useState('');
   const [inviteRole, setInviteRole] = useState<Role>('attendant');
   const [inviteShop, setInviteShop] = useState<string>(SHOPS[0]);
+  const [syncing, setSyncing] = useState(false);
 
   if (!can('team')) {
     return (
@@ -28,6 +29,12 @@ export const TeamView: React.FC = () => {
     await inviteMember(inviteEmail, inviteRole, inviteRole === 'attendant' ? inviteShop : null, inviteName);
     setInviteEmail('');
     setInviteName('');
+  };
+
+  const handleCloudSync = async (wipeCache = false) => {
+    setSyncing(true);
+    await refreshFromCloud(wipeCache);
+    setSyncing(false);
   };
 
   return (
@@ -92,11 +99,11 @@ export const TeamView: React.FC = () => {
               </div>
 
               {m.id !== me.id && (
-                <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
                   <select
                     value={m.role}
                     onChange={e => saveMember(m.id, e.target.value as Role, m.shop || SHOPS[0])}
-                    style={{ margin: 0, fontSize: '12px', padding: '4px 8px' }}
+                    style={{ margin: 0, fontSize: '12px', padding: '4px 8px', flex: '1 1 auto', minWidth: '130px' }}
                   >
                     <option value="attendant">Shop Attendant</option>
                     <option value="data_entry">Data Entry</option>
@@ -108,9 +115,27 @@ export const TeamView: React.FC = () => {
                     type="button"
                     className="s"
                     onClick={() => toggleMember(m.id, !m.active)}
-                    style={{ fontSize: '11px', padding: '4px 8px', minHeight: 'auto' }}
+                    style={{ fontSize: '11px', padding: '4px 10px', minHeight: 'auto' }}
                   >
                     {m.active ? 'Block Access' : 'Activate'}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="s"
+                    onClick={() => deleteMember(m.id)}
+                    style={{
+                      fontSize: '11px',
+                      padding: '4px 10px',
+                      minHeight: 'auto',
+                      color: 'var(--rd)',
+                      borderColor: 'rgba(239, 68, 68, 0.35)',
+                      background: 'var(--bg)',
+                      fontWeight: 600
+                    }}
+                    title={`Delete staff account ${m.name || m.email}`}
+                  >
+                    🗑️ Remove
                   </button>
                 </div>
               )}
@@ -119,6 +144,44 @@ export const TeamView: React.FC = () => {
         ) : (
           <small style={{ color: 'var(--mu)' }}>No team members listed yet.</small>
         )}
+      </div>
+
+      {/* Cloud Database & Sync Operations */}
+      <div className="c">
+        <h2>🗄️ Cloud Database &amp; Sync Control</h2>
+        <p style={{ fontSize: '13px', color: 'var(--mu)', margin: '0 0 12px', lineHeight: 1.5 }}>
+          If you delete or update records directly inside the Supabase table editor, use these controls to sync immediately with your cloud database:
+        </p>
+
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="s"
+            disabled={syncing}
+            onClick={() => handleCloudSync(false)}
+            style={{ flex: 1, minHeight: 'auto', padding: '10px' }}
+          >
+            {syncing ? 'Syncing...' : '🔄 Sync from Cloud Database'}
+          </button>
+
+          <button
+            type="button"
+            className="s"
+            disabled={syncing}
+            onClick={() => handleCloudSync(true)}
+            style={{
+              flex: 1,
+              minHeight: 'auto',
+              padding: '10px',
+              color: 'var(--tx)',
+              borderColor: 'var(--bd)',
+              background: 'var(--bg)'
+            }}
+            title="Purges local cache and downloads fresh tables from Supabase"
+          >
+            🧹 Reset Cache &amp; Re-sync
+          </button>
+        </div>
       </div>
     </>
   );

@@ -129,6 +129,29 @@ export const COUNTRY_DIAL_CODES: CountryDialCode[] = [
   { code: '+', country: 'Other (Custom)', flag: '🌍' }
 ];
 
+export const GHANA_BANKS = [
+  'Guaranty Trust Bank (GTBank)',
+  'Ecobank Ghana',
+  'GCB Bank',
+  'Stanbic Bank Ghana',
+  'Absa Bank Ghana',
+  'Fidelity Bank Ghana',
+  'Zenith Bank Ghana',
+  'CalBank',
+  'Access Bank Ghana',
+  'Standard Chartered Ghana',
+  'Consolidated Bank Ghana (CBG)',
+  'Agricultural Development Bank (ADB)',
+  'Republic Bank Ghana',
+  'Prudential Bank',
+  'FBNBank Ghana',
+  'Bank of Africa Ghana',
+  'First National Bank Ghana',
+  'MTN Mobile Money (MoMo)',
+  'Telecel Cash',
+  'AT Money'
+] as const;
+
 export const SB_URL = (import.meta.env.VITE_SUPABASE_URL || 'https://vitalucvobokjkdogwiq.supabase.co').trim();
 export const SB_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_H57950cizG2oEs2q6O2_fQ_gv7v8DgB').trim();
 
@@ -138,7 +161,8 @@ export const TB_MAP: Record<string, string> = {
   sales: 'sales',
   pay: 'payments',
   costs: 'costs',
-  customers: 'customers'
+  customers: 'customers',
+  farmers: 'farmers'
 };
 
 export function uid(): string {
@@ -243,5 +267,6 @@ export const EMPTY_APP_STATE: AppStateData = {
   pay: [],
   costs: [],
   customers: [],
+  farmers: [],
   profiles: []
 };

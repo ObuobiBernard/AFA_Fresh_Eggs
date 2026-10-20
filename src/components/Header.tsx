@@ -28,7 +28,7 @@ export const Header: React.FC = () => {
             width: '36px',
             height: '36px',
             borderRadius: '10px',
-            background: 'linear-gradient(135deg, var(--g), #144027)',
+            background: 'var(--g)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',

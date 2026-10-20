@@ -5,6 +5,7 @@ import { BottomNav } from './components/BottomNav';
 import { SplashScreen } from './components/SplashScreen';
 import { CookieBanner } from './components/CookieBanner';
 import { LegalCenterModal } from './components/LegalCenterModal';
+import { ConfirmDeleteModal } from './components/ConfirmDeleteModal';
 import { usePageSEO } from './hooks/usePageSEO';
 
 import { HomeView } from './views/HomeView';
@@ -23,7 +24,20 @@ import { TabKey } from './types';
 const VALID_TABS: TabKey[] = ['home', 'sell', 'collect', 'credit', 'costs', 'prices', 'team', 'domain', '404'];
 
 const AppContent: React.FC = () => {
-  const { me, tab, setTab, showSplash, setShowSplash, toastMsg, legalTab, openLegal, closeLegal } = useApp();
+  const {
+    me,
+    tab,
+    setTab,
+    showSplash,
+    setShowSplash,
+    toastMsg,
+    legalTab,
+    openLegal,
+    closeLegal,
+    deleteTarget,
+    confirmDeleteAction,
+    cancelDelete
+  } = useApp();
 
   // Dynamic Page Title, Meta Description, OpenGraph, and Canonical URL
   usePageSEO(!me.id ? 'login' : tab);
@@ -104,6 +118,16 @@ const AppContent: React.FC = () => {
       {/* Legal & Compliance Hub Modal */}
       {legalTab && (
         <LegalCenterModal initialTab={legalTab} onClose={closeLegal} />
+      )}
+
+      {/* Confirmation Modal for Permanent Deletions */}
+      {deleteTarget && (
+        <ConfirmDeleteModal
+          itemName={deleteTarget.name}
+          itemType={deleteTarget.typeLabel || 'entry'}
+          onConfirm={confirmDeleteAction}
+          onClose={cancelDelete}
+        />
       )}
     </div>
   );

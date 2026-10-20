@@ -11,7 +11,7 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onDismiss }) => {
         position: 'fixed',
         inset: 0,
         zIndex: 9999,
-        background: 'linear-gradient(145deg, #0e291b 0%, #1F5E3B 60%, #164229 100%)',
+        background: '#1F5E3B',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',

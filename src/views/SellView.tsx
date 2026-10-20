@@ -266,8 +266,12 @@ export const SellView: React.FC = () => {
         </button>
       </form>
 
-      <div className="c">
-        <h3>Recent Sales</h3>
+      {/* Recent Sales History (Collapsible Dropdown) */}
+      <details className="c">
+        <summary>
+          <span>🧾 Recent Sales History ({recentSales.length})</span>
+          <span className="summary-chevron">▼</span>
+        </summary>
         {recentSales.length > 0 ? (
           recentSales.map(s => {
             const tot = s.qty * s.price;
@@ -285,18 +289,27 @@ export const SellView: React.FC = () => {
                 <div style={{ textAlign: 'right' }}>
                   <b>{gh(tot)}</b>
                   {bal > 0 ? (
-                    <small style={{ color: 'var(--rd)' }}>Due: {gh(bal)}</small>
+                    <small style={{ color: 'var(--rd)', display: 'block' }}>Due: {gh(bal)}</small>
                   ) : (
-                    <small style={{ color: 'var(--g)' }}>Paid</small>
+                    <small style={{ color: 'var(--g)', display: 'block' }}>Paid</small>
                   )}
                   {mayDel('sales', s) && (
                     <button
                       type="button"
                       className="s"
                       onClick={() => delItem('sales', s.id)}
-                      style={{ marginLeft: '6px', padding: '2px 6px', fontSize: '11px' }}
+                      style={{
+                        marginLeft: '6px',
+                        padding: '3px 8px',
+                        fontSize: '11px',
+                        color: 'var(--rd)',
+                        borderColor: 'rgba(239, 68, 68, 0.35)',
+                        background: 'var(--bg)',
+                        fontWeight: 600
+                      }}
+                      title="Delete sale permanently"
                     >
-                      ×
+                      🗑️
                     </button>
                   )}
                 </div>
@@ -306,7 +319,7 @@ export const SellView: React.FC = () => {
         ) : (
           <small style={{ color: 'var(--mu)' }}>No sales recorded yet.</small>
         )}
-      </div>
+      </details>
 
       {receiptSale && (
         <ReceiptModal

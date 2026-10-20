@@ -8,7 +8,7 @@ import { vibrateSuccess } from '../utils/haptics';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 
 export const CreditView: React.FC = () => {
-  const { appState, can, debts, addCustomer, updateCustomer, payDebt, mayDel, delItem } = useApp();
+  const { appState, can, debts, addCustomer, updateCustomer, payDebt, mayDel, delItem, refreshFromCloud } = useApp();
 
   const [custName, setCustName] = useState('');
   const [custDialCode, setCustDialCode] = useState('+233');
@@ -18,6 +18,13 @@ export const CreditView: React.FC = () => {
   const [statementCustomer, setStatementCustomer] = useState<CustomerItem | null>(null);
   const [editingCustomer, setEditingCustomer] = useState<CustomerItem | null>(null);
   const [submittingCust, setSubmittingCust] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    await refreshFromCloud();
+    setSyncing(false);
+  };
 
   if (!can('pay') && !can('customer')) {
     return (
@@ -238,6 +245,29 @@ export const CreditView: React.FC = () => {
                           </button>
                         )}
 
+                        {mayDel('customers', c) && (
+                          <button
+                            type="button"
+                            className="s"
+                            style={{
+                              color: 'var(--rd)',
+                              border: '1px solid rgba(239, 68, 68, 0.35)',
+                              background: 'var(--bg)',
+                              padding: '5px 8px',
+                              fontSize: '11px',
+                              fontWeight: 600
+                            }}
+                            onClick={e => {
+                              e.stopPropagation();
+                              delItem('customers', c.id);
+                            }}
+                            aria-label={`Delete customer ${c.name}`}
+                            title="Delete customer permanently"
+                          >
+                            🗑️
+                          </button>
+                        )}
+
                         {wa}
                       </div>
                     </div>
@@ -403,9 +433,28 @@ export const CreditView: React.FC = () => {
         )}
       </div>
 
-      {/* Full Customer Directory */}
+      {/* Full Customer Directory (Collapsible Dropdown) */}
       <details className="c" open={Boolean(cleanSearch)}>
-        <summary>👥 All Customers Directory ({filteredCustomers.length})</summary>
+        <summary style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>👥 All Customers Directory ({filteredCustomers.length})</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              type="button"
+              className="s"
+              onClick={e => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleSync();
+              }}
+              disabled={syncing}
+              title="Refresh customers from Supabase database"
+              style={{ fontSize: '11px', padding: '3px 8px', minHeight: 'auto' }}
+            >
+              {syncing ? 'Syncing...' : '🔄 Sync DB'}
+            </button>
+            <span className="summary-chevron">▼</span>
+          </div>
+        </summary>
         <div>
           {filteredCustomers.length > 0 ? (
             filteredCustomers.map(c => {
@@ -458,9 +507,17 @@ export const CreditView: React.FC = () => {
                         className="s"
                         onClick={() => delItem('customers', c.id)}
                         aria-label={`Delete customer ${c.name}`}
-                        title="Delete customer"
+                        title="Delete customer permanently"
+                        style={{
+                          color: 'var(--rd)',
+                          borderColor: 'rgba(239, 68, 68, 0.35)',
+                          background: 'var(--bg)',
+                          padding: '3px 8px',
+                          fontSize: '11px',
+                          fontWeight: 600
+                        }}
                       >
-                        ×
+                        🗑️ Delete
                       </button>
                     )}
                   </div>
@@ -490,6 +547,7 @@ export const CreditView: React.FC = () => {
           customer={editingCustomer}
           onSave={updateCustomer}
           onClose={() => setEditingCustomer(null)}
+          onDelete={mayDel('customers', editingCustomer) ? id => delItem('customers', id) : undefined}
         />
       )}
     </>

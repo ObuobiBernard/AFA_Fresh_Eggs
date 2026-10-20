@@ -11,7 +11,7 @@ export const PWAInstallButton: React.FC = () => {
       style={{
         margin: '12px 0',
         padding: '12px 16px',
-        background: 'linear-gradient(135deg, rgba(31, 94, 59, 0.12), rgba(212, 160, 23, 0.12))',
+        background: 'rgba(31, 94, 59, 0.08)',
         border: '1px solid var(--g)',
         borderRadius: '14px',
         display: 'flex',

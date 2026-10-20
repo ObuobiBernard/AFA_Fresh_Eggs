@@ -65,7 +65,7 @@ export const LoginView: React.FC = () => {
               width: '64px',
               height: '64px',
               borderRadius: '20px',
-              background: 'linear-gradient(135deg, var(--g), #123e25)',
+              background: 'var(--g)',
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',

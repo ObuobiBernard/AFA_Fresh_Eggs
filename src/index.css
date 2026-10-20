@@ -257,8 +257,35 @@ button.s {
 details summary {
   cursor: pointer;
   font-weight: 700;
-  padding: 6px 0;
+  padding: 8px 0;
   outline: none;
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+  font-size: 15px;
+}
+
+details summary::-webkit-details-marker {
+  display: none;
+}
+
+details.c[open] summary {
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--bd);
+  padding-bottom: 10px;
+}
+
+.summary-chevron {
+  display: inline-block;
+  transition: transform 0.2s ease;
+  font-size: 12px;
+  color: var(--mu);
+}
+
+details[open] .summary-chevron {
+  transform: rotate(180deg);
 }
 
 @media print {
