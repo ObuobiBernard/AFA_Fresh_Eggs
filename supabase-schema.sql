@@ -154,7 +154,7 @@ BEGIN
     END IF;
 END $$;
 
--- 6. Operating Expenses / Farmer Payouts Table
+-- 6. Operating Expenses / Farmer Payouts / Driver Reimbursements Table
 CREATE TABLE IF NOT EXISTS public.costs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     date DATE NOT NULL,
@@ -162,8 +162,44 @@ CREATE TABLE IF NOT EXISTS public.costs (
     amt NUMERIC NOT NULL DEFAULT 0,
     shop TEXT,
     created_by UUID,
+    driver_name TEXT,
+    status TEXT DEFAULT 'paid',
+    paid_date DATE,
+    payment_method TEXT DEFAULT 'Cash',
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Add driver reimbursement tracking columns if table was created prior
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'costs' AND column_name = 'driver_name'
+    ) THEN 
+        ALTER TABLE public.costs ADD COLUMN driver_name TEXT;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'costs' AND column_name = 'status'
+    ) THEN 
+        ALTER TABLE public.costs ADD COLUMN status TEXT DEFAULT 'paid';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'costs' AND column_name = 'paid_date'
+    ) THEN 
+        ALTER TABLE public.costs ADD COLUMN paid_date DATE;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'costs' AND column_name = 'payment_method'
+    ) THEN 
+        ALTER TABLE public.costs ADD COLUMN payment_method TEXT DEFAULT 'Cash';
+    END IF;
+END $$;
 
 ALTER TABLE public.costs ENABLE ROW LEVEL SECURITY;
 

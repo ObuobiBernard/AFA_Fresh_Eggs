@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
-import { SHOPS, td, gh, formatPhone, COUNTRY_DIAL_CODES } from '../constants';
+import { SHOPS, td, gh, formatPhone, COUNTRY_DIAL_CODES, wkRange } from '../constants';
 import { SaleItem } from '../types';
 import { vibrateSuccess } from '../utils/haptics';
 import { ReceiptModal } from '../components/ReceiptModal';
 import { Breadcrumbs } from '../components/Breadcrumbs';
+import { WeekNavigator } from '../components/WeekNavigator';
 
 export const SellView: React.FC = () => {
-  const { appState, can, myShop, me, shopStockQty, scopeRows, addSale, mayDel, delItem } = useApp();
+  const { appState, can, myShop, me, shopStockQty, scopeRows, addSale, mayDel, delItem, selDate } = useApp();
 
   const prices = appState.prices;
   const customers = appState.customers;
@@ -26,6 +27,8 @@ export const SellView: React.FC = () => {
   const [paidAmt, setPaidAmt] = useState('');
   const [dueDays, setDueDays] = useState('7');
   const [submitting, setSubmitting] = useState(false);
+  const [viewMode, setViewMode] = useState<'week' | 'all'>('week');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const [receiptSale, setReceiptSale] = useState<SaleItem | null>(null);
 
@@ -114,7 +117,37 @@ export const SellView: React.FC = () => {
     setTimeout(() => setSubmitting(false), 400);
   };
 
-  const recentSales = scopeRows(appState.sales).slice(-8).reverse();
+  const activeDate = selDate || td();
+  const week = wkRange(activeDate);
+  const currentWeek = wkRange(td());
+  const isCurrentWeek = week.start === currentWeek.start;
+
+  const allScopedSales = scopeRows(appState.sales);
+  const weekScopedSales = allScopedSales.filter(s => s.date >= week.start && s.date <= week.end);
+
+  const sourceSales = viewMode === 'week' ? weekScopedSales : allScopedSales;
+  const filteredSales = sourceSales
+    .filter(s => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      const cObj = appState.customers.find(c => c.id === s.cust_id);
+      const custNameStr = cObj ? cObj.name.toLowerCase() : 'walk-in';
+      return (
+        s.lbl.toLowerCase().includes(q) ||
+        (s.shop || '').toLowerCase().includes(q) ||
+        s.date.includes(q) ||
+        s.method.toLowerCase().includes(q) ||
+        custNameStr.includes(q)
+      );
+    })
+    .slice()
+    .reverse();
+
+  // Selected week totals
+  const weekCrates = weekScopedSales.reduce((acc, s) => acc + s.qty, 0);
+  const weekRevenue = weekScopedSales.reduce((acc, s) => acc + s.qty * s.price, 0);
+  const weekPaid = weekScopedSales.reduce((acc, s) => acc + s.paid, 0);
+  const weekDue = Math.max(0, weekRevenue - weekPaid);
 
   return (
     <>
@@ -266,46 +299,155 @@ export const SellView: React.FC = () => {
         </button>
       </form>
 
-      {/* Recent Sales History (Collapsible Dropdown) */}
-      <details className="c">
-        <summary>
-          <span>🧾 Recent Sales History ({recentSales.length})</span>
+      {/* Sales History & Weekly Reports */}
+      <details className="c" open>
+        <summary style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>🧾 Sales Records &amp; History ({filteredSales.length})</span>
+            {viewMode === 'week' && (
+              <span className="sync-pill" style={{ background: 'rgba(37, 211, 102, 0.15)', color: 'var(--g)', fontSize: '11px' }}>
+                {isCurrentWeek ? 'This Week' : `${week.start} – ${week.end}`}
+              </span>
+            )}
+          </div>
           <span className="summary-chevron">▼</span>
         </summary>
-        {recentSales.length > 0 ? (
-          recentSales.map(s => {
+
+        {/* View mode toggle */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              type="button"
+              className="s"
+              onClick={() => setViewMode('week')}
+              style={{
+                padding: '5px 12px',
+                fontSize: '12px',
+                minHeight: 'auto',
+                background: viewMode === 'week' ? 'var(--tx)' : 'var(--bg)',
+                color: viewMode === 'week' ? 'var(--cd)' : 'var(--tx)',
+                borderColor: viewMode === 'week' ? 'var(--tx)' : 'var(--bd)',
+                fontWeight: 700
+              }}
+            >
+              📅 Selected Week ({weekScopedSales.length})
+            </button>
+            <button
+              type="button"
+              className="s"
+              onClick={() => setViewMode('all')}
+              style={{
+                padding: '5px 12px',
+                fontSize: '12px',
+                minHeight: 'auto',
+                background: viewMode === 'all' ? 'var(--tx)' : 'var(--bg)',
+                color: viewMode === 'all' ? 'var(--cd)' : 'var(--tx)',
+                borderColor: viewMode === 'all' ? 'var(--tx)' : 'var(--bd)',
+                fontWeight: 700
+              }}
+            >
+              📋 All Sales ({allScopedSales.length})
+            </button>
+          </div>
+
+          <input
+            type="search"
+            placeholder="Search sales..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            style={{ margin: 0, padding: '4px 10px', fontSize: '12px', maxWidth: '200px', height: '32px' }}
+          />
+        </div>
+
+        {/* Week Navigator when viewing by week */}
+        {viewMode === 'week' && (
+          <>
+            <WeekNavigator label="Viewing Sales for this Week" />
+
+            {/* Selected week summary cards */}
+            <div className="g" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '14px' }}>
+              <div className="card-stat" style={{ padding: '8px 10px' }}>
+                <small>Crates Sold</small>
+                <b style={{ fontSize: '16px' }}>{weekCrates}</b>
+                <span style={{ fontSize: '10px', color: 'var(--mu)' }}>in selected week</span>
+              </div>
+              <div className="card-stat" style={{ padding: '8px 10px' }}>
+                <small>Sales Revenue</small>
+                <b style={{ fontSize: '16px', color: 'var(--g)' }}>{gh(weekRevenue)}</b>
+                <span style={{ fontSize: '10px', color: 'var(--mu)' }}>total value</span>
+              </div>
+              <div className="card-stat" style={{ padding: '8px 10px' }}>
+                <small>Cash Received</small>
+                <b style={{ fontSize: '16px' }}>{gh(weekPaid)}</b>
+                <span style={{ fontSize: '10px', color: 'var(--g)' }}>settled in cash/momo</span>
+              </div>
+              <div className="card-stat" style={{ padding: '8px 10px' }}>
+                <small>Credit / Balance Due</small>
+                <b style={{ fontSize: '16px', color: weekDue > 0 ? 'var(--rd)' : 'var(--mu)' }}>{gh(weekDue)}</b>
+                <span style={{ fontSize: '10px', color: 'var(--mu)' }}>owed by customers</span>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Sales List */}
+        {filteredSales.length > 0 ? (
+          filteredSales.map(s => {
             const tot = s.qty * s.price;
             const bal = Math.max(0, tot - s.paid);
             const cObj = appState.customers.find(c => c.id === s.cust_id);
+            const customerDisplayName = cObj ? cObj.name : 'Walk-in';
 
             return (
-              <div key={s.id} className="l">
-                <div>
+              <div key={s.id} className="l" style={{ alignItems: 'center' }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
                   <b>{s.lbl} ({s.qty} crates)</b>
-                  <small>
-                    {s.date} · {cObj ? cObj.name : 'Walk-in'} ({s.method})
+                  <small style={{ display: 'block', color: 'var(--mu)' }}>
+                    {s.date} · {customerDisplayName} ({s.method}) · {s.shop}
                   </small>
                 </div>
-                <div style={{ textAlign: 'right' }}>
-                  <b>{gh(tot)}</b>
-                  {bal > 0 ? (
-                    <small style={{ color: 'var(--rd)', display: 'block' }}>Due: {gh(bal)}</small>
-                  ) : (
-                    <small style={{ color: 'var(--g)', display: 'block' }}>Paid</small>
-                  )}
+                <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <div>
+                    <b>{gh(tot)}</b>
+                    {bal > 0 ? (
+                      <small style={{ color: 'var(--rd)', display: 'block' }}>Due: {gh(bal)}</small>
+                    ) : (
+                      <small style={{ color: 'var(--g)', display: 'block' }}>Paid</small>
+                    )}
+                  </div>
+
+                  {/* Receipt Trigger */}
+                  <button
+                    type="button"
+                    className="s"
+                    onClick={() => {
+                      setReceiptSale(s);
+                    }}
+                    title="Print or share receipt"
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: '11px',
+                      minHeight: 'auto',
+                      background: 'var(--bg)',
+                      border: '1px solid var(--bd)'
+                    }}
+                  >
+                    🧾
+                  </button>
+
                   {mayDel('sales', s) && (
                     <button
                       type="button"
                       className="s"
                       onClick={() => delItem('sales', s.id)}
                       style={{
-                        marginLeft: '6px',
-                        padding: '3px 8px',
+                        padding: '4px 8px',
                         fontSize: '11px',
                         color: 'var(--rd)',
                         borderColor: 'rgba(239, 68, 68, 0.35)',
                         background: 'var(--bg)',
-                        fontWeight: 600
+                        fontWeight: 600,
+                        minHeight: 'auto'
                       }}
                       title="Delete sale permanently"
                     >
@@ -317,7 +459,23 @@ export const SellView: React.FC = () => {
             );
           })
         ) : (
-          <small style={{ color: 'var(--mu)' }}>No sales recorded yet.</small>
+          <div style={{ textAlign: 'center', padding: '16px', background: 'var(--bg)', borderRadius: '10px' }}>
+            <p style={{ margin: 0, color: 'var(--mu)', fontSize: '13px' }}>
+              {viewMode === 'week'
+                ? `No sales recorded for ${week.start} to ${week.end}.`
+                : 'No sales recorded match your search.'}
+            </p>
+            {viewMode === 'week' && (
+              <button
+                type="button"
+                className="s"
+                onClick={() => setViewMode('all')}
+                style={{ marginTop: '8px', fontSize: '12px', padding: '4px 10px' }}
+              >
+                View All Sales History
+              </button>
+            )}
+          </div>
         )}
       </details>
 

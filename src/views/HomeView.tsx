@@ -7,13 +7,19 @@ import { PWAInstallButton } from '../components/PWAInstallButton';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { DatabaseSchemaModal } from '../components/DatabaseSchemaModal';
 
+import { WeekNavigator } from '../components/WeekNavigator';
+
 export const HomeView: React.FC = () => {
-  const { appState, myShop, scopeRows, stock, openLegal, backupJSON, restoreBackupJSON, exportCSV, setTab } = useApp();
+  const { appState, myShop, scopeRows, stock, openLegal, backupJSON, restoreBackupJSON, exportCSV, setTab, selDate } = useApp();
   const [showReconcile, setShowReconcile] = useState(false);
   const [showDbSchema, setShowDbSchema] = useState(false);
 
   const attendantShop = myShop();
-  const week = wkRange(td());
+  const activeDate = selDate || td();
+  const week = wkRange(activeDate);
+  const currentWeek = wkRange(td());
+  const isCurrentWeek = week.start === currentWeek.start;
+
   const scopedSales = scopeRows(appState.sales).filter(s => s.date >= week.start && s.date <= week.end);
   const scopedCol = scopeRows(appState.col).filter(c => c.date >= week.start && c.date <= week.end);
   const scopedCosts = scopeRows(appState.costs).filter(c => c.date >= week.start && c.date <= week.end);
@@ -22,6 +28,12 @@ export const HomeView: React.FC = () => {
   const revenue = scopedSales.reduce((acc, s) => acc + s.qty * s.price, 0);
   const cratesCollected = scopedCol.reduce((acc, c) => acc + c.qty, 0);
   const expenses = scopedCosts.reduce((acc, c) => acc + c.amt, 0);
+
+  const pendingDriverInWeek = scopedCosts.filter(c => c.status === 'unpaid');
+  const pendingDriverAmt = pendingDriverInWeek.reduce((acc, c) => acc + c.amt, 0);
+
+  const allPendingDriverCosts = scopeRows(appState.costs).filter(c => c.status === 'unpaid');
+  const allPendingDriverAmt = allPendingDriverCosts.reduce((acc, c) => acc + c.amt, 0);
 
   const stockInfo = stock();
   const totalStockCrates = Object.values(stockInfo.m).reduce((a, b) => a + b, 0);
@@ -42,10 +54,58 @@ export const HomeView: React.FC = () => {
 
       <PWAInstallButton />
 
+      {/* Alert banner if drivers are owed reimbursement */}
+      {allPendingDriverCosts.length > 0 && (
+        <div
+          style={{
+            background: 'rgba(234, 179, 8, 0.12)',
+            border: '1px solid rgba(234, 179, 8, 0.35)',
+            borderRadius: '12px',
+            padding: '10px 14px',
+            marginBottom: '14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px',
+            flexWrap: 'wrap'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '18px' }}>🚗</span>
+            <div>
+              <b style={{ fontSize: '13px', color: '#b45309' }}>
+                {allPendingDriverCosts.length} Driver Reimbursement{allPendingDriverCosts.length > 1 ? 's' : ''} Pending ({gh(allPendingDriverAmt)})
+              </b>
+              <small style={{ color: 'var(--mu)', display: 'block', fontSize: '11px' }}>
+                Delivery drivers are waiting for fuel, transit or collection reimbursements.
+              </small>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="s"
+            onClick={() => setTab('costs')}
+            style={{
+              background: '#b45309',
+              color: '#ffffff',
+              fontSize: '11px',
+              padding: '5px 12px',
+              fontWeight: 700,
+              minHeight: 'auto'
+            }}
+          >
+            Settle Payouts ➔
+          </button>
+        </div>
+      )}
+
+      {/* Interactive Week Navigator */}
+      <WeekNavigator label="Viewing Sales &amp; Collections Period" />
+
       {/* Week overview stats */}
       <div className="c">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <h2>📊 This Week's Performance</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+          <h2>📊 {isCurrentWeek ? "This Week's Performance" : "Selected Week's Performance"}</h2>
           <small style={{ color: 'var(--mu)', fontSize: '11px' }}>
             {week.start} to {week.end}
           </small>
@@ -75,12 +135,57 @@ export const HomeView: React.FC = () => {
           <div className="card-stat">
             <small>Total Expenses</small>
             <b>{gh(expenses)}</b>
-            <span style={{ fontSize: '11px', color: 'var(--mu)' }}>Fuel, crates & transit</span>
+            <span
+              style={{
+                fontSize: '11px',
+                color: pendingDriverAmt > 0 ? '#b45309' : 'var(--mu)',
+                fontWeight: pendingDriverAmt > 0 ? 600 : 400
+              }}
+            >
+              {pendingDriverAmt > 0 ? `⚠️ ${gh(pendingDriverAmt)} driver unpaid` : 'Fuel, crates & transit'}
+            </span>
           </div>
         </div>
 
         {/* Weekly sales chart */}
         <WeeklySalesChart sales={scopedSales} startDate={week.start} />
+
+        {/* Breakdown of this selected week's activity */}
+        {(scopedSales.length > 0 || scopedCol.length > 0 || scopedCosts.length > 0) && (
+          <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid var(--bd)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--tx)' }}>
+                Activity in Selected Week ({week.start} – {week.end})
+              </span>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="s"
+                  onClick={() => setTab('sell')}
+                  style={{ fontSize: '11px', padding: '3px 8px', minHeight: 'auto' }}
+                >
+                  Sales ({scopedSales.length}) ➔
+                </button>
+                <button
+                  type="button"
+                  className="s"
+                  onClick={() => setTab('collect')}
+                  style={{ fontSize: '11px', padding: '3px 8px', minHeight: 'auto' }}
+                >
+                  Collections ({scopedCol.length}) ➔
+                </button>
+                <button
+                  type="button"
+                  className="s"
+                  onClick={() => setTab('costs')}
+                  style={{ fontSize: '11px', padding: '3px 8px', minHeight: 'auto' }}
+                >
+                  Costs ({scopedCosts.length}) ➔
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Real-time Shop Inventory */}

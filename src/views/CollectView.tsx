@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
-import { SHOPS, td, gh } from '../constants';
+import { SHOPS, td, gh, wkRange } from '../constants';
 import { FarmerItem } from '../types';
 import { vibrateSuccess } from '../utils/haptics';
 import { Breadcrumbs } from '../components/Breadcrumbs';
 import { FarmerProfileModal } from '../components/FarmerProfileModal';
 import { FarmerPaymentModal } from '../components/FarmerPaymentModal';
+import { WeekNavigator } from '../components/WeekNavigator';
 
 export const CollectView: React.FC = () => {
   const {
@@ -20,7 +21,8 @@ export const CollectView: React.FC = () => {
     scopeRows,
     mayDel,
     delItem,
-    delFarmer
+    delFarmer,
+    selDate
   } = useApp();
 
   const prices = appState.prices;
@@ -33,6 +35,8 @@ export const CollectView: React.FC = () => {
   const [paidAmt, setPaidAmt] = useState('');
   const [transport, setTransport] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [viewMode, setViewMode] = useState<'week' | 'all'>('week');
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Modals for farmer bank account & payouts
   const [payingFarm, setPayingFarm] = useState<{
@@ -88,7 +92,34 @@ export const CollectView: React.FC = () => {
   };
 
   const farmBalancesList = farmerBalances();
-  const recentCols = scopeRows(appState.col).slice(-8).reverse();
+
+  const activeDate = selDate || td();
+  const week = wkRange(activeDate);
+  const currentWeek = wkRange(td());
+  const isCurrentWeek = week.start === currentWeek.start;
+
+  const allScopedCols = scopeRows(appState.col);
+  const weekScopedCols = allScopedCols.filter(c => c.date >= week.start && c.date <= week.end);
+
+  const sourceCols = viewMode === 'week' ? weekScopedCols : allScopedCols;
+  const filteredCols = sourceCols
+    .filter(c => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      return (
+        (c.lbl || '').toLowerCase().includes(q) ||
+        (c.shop || '').toLowerCase().includes(q) ||
+        c.date.includes(q)
+      );
+    })
+    .slice()
+    .reverse();
+
+  // Weekly metrics
+  const weekCrates = weekScopedCols.reduce((acc, c) => acc + c.qty, 0);
+  const weekCost = weekScopedCols.reduce((acc, c) => acc + c.qty * c.buy, 0);
+  const weekPaid = weekScopedCols.reduce((acc, c) => acc + (c.paid_amt || 0), 0);
+  const weekOwed = Math.max(0, weekCost - weekPaid);
 
   return (
     <>
@@ -300,14 +331,100 @@ export const CollectView: React.FC = () => {
         )}
       </details>
 
-      {/* Recent Collections List (Collapsible Dropdown) */}
-      <details className="c">
-        <summary>
-          <span>📦 Recent Collections History ({recentCols.length})</span>
+      {/* Collections History & Weekly Reports */}
+      <details className="c" open>
+        <summary style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span>📦 Farm Collections History ({filteredCols.length})</span>
+            {viewMode === 'week' && (
+              <span className="sync-pill" style={{ background: 'rgba(37, 211, 102, 0.15)', color: 'var(--g)', fontSize: '11px' }}>
+                {isCurrentWeek ? 'This Week' : `${week.start} – ${week.end}`}
+              </span>
+            )}
+          </div>
           <span className="summary-chevron">▼</span>
         </summary>
-        {recentCols.length > 0 ? (
-          recentCols.map(c => {
+
+        {/* View mode toggle */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              type="button"
+              className="s"
+              onClick={() => setViewMode('week')}
+              style={{
+                padding: '5px 12px',
+                fontSize: '12px',
+                minHeight: 'auto',
+                background: viewMode === 'week' ? 'var(--tx)' : 'var(--bg)',
+                color: viewMode === 'week' ? 'var(--cd)' : 'var(--tx)',
+                borderColor: viewMode === 'week' ? 'var(--tx)' : 'var(--bd)',
+                fontWeight: 700
+              }}
+            >
+              📅 Selected Week ({weekScopedCols.length})
+            </button>
+            <button
+              type="button"
+              className="s"
+              onClick={() => setViewMode('all')}
+              style={{
+                padding: '5px 12px',
+                fontSize: '12px',
+                minHeight: 'auto',
+                background: viewMode === 'all' ? 'var(--tx)' : 'var(--bg)',
+                color: viewMode === 'all' ? 'var(--cd)' : 'var(--tx)',
+                borderColor: viewMode === 'all' ? 'var(--tx)' : 'var(--bd)',
+                fontWeight: 700
+              }}
+            >
+              📋 All Collections ({allScopedCols.length})
+            </button>
+          </div>
+
+          <input
+            type="search"
+            placeholder="Search collections..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            style={{ margin: 0, padding: '4px 10px', fontSize: '12px', maxWidth: '200px', height: '32px' }}
+          />
+        </div>
+
+        {/* Week Navigator when viewing by week */}
+        {viewMode === 'week' && (
+          <>
+            <WeekNavigator label="Viewing Collections for this Week" />
+
+            {/* Selected week summary cards */}
+            <div className="g" style={{ gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '14px' }}>
+              <div className="card-stat" style={{ padding: '8px 10px' }}>
+                <small>Crates Collected</small>
+                <b style={{ fontSize: '16px' }}>{weekCrates}</b>
+                <span style={{ fontSize: '10px', color: 'var(--mu)' }}>in selected week</span>
+              </div>
+              <div className="card-stat" style={{ padding: '8px 10px' }}>
+                <small>Farm Purchase Cost</small>
+                <b style={{ fontSize: '16px', color: 'var(--tx)' }}>{gh(weekCost)}</b>
+                <span style={{ fontSize: '10px', color: 'var(--mu)' }}>total supply value</span>
+              </div>
+              <div className="card-stat" style={{ padding: '8px 10px' }}>
+                <small>Paid to Farmers</small>
+                <b style={{ fontSize: '16px', color: 'var(--g)' }}>{gh(weekPaid)}</b>
+                <span style={{ fontSize: '10px', color: 'var(--g)' }}>settled to suppliers</span>
+              </div>
+              <div className="card-stat" style={{ padding: '8px 10px' }}>
+                <small>Farmer Balance Due</small>
+                <b style={{ fontSize: '16px', color: weekOwed > 0 ? 'var(--rd)' : 'var(--mu)' }}>{gh(weekOwed)}</b>
+                <span style={{ fontSize: '10px', color: 'var(--mu)' }}>owed to farmers</span>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Collections List */}
+        {filteredCols.length > 0 ? (
+          filteredCols.map(c => {
             const total = c.qty * c.buy;
             const remaining = Math.max(0, total - (c.paid_amt || 0));
             const farmName = c.lbl ? c.lbl.split(' · ')[0].trim() : '';
@@ -316,7 +433,9 @@ export const CollectView: React.FC = () => {
               <div key={c.id} className="l">
                 <div>
                   <b>{c.lbl} ({c.qty} crates)</b>
-                  <small>{c.date} · {c.shop}</small>
+                  <small style={{ display: 'block', color: 'var(--mu)' }}>
+                    {c.date} · {c.shop} · Rate: {gh(c.buy)}/crate
+                  </small>
                 </div>
                 <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <div>
@@ -377,7 +496,23 @@ export const CollectView: React.FC = () => {
             );
           })
         ) : (
-          <small style={{ color: 'var(--mu)' }}>No collections recorded yet.</small>
+          <div style={{ textAlign: 'center', padding: '16px', background: 'var(--bg)', borderRadius: '10px' }}>
+            <p style={{ margin: 0, color: 'var(--mu)', fontSize: '13px' }}>
+              {viewMode === 'week'
+                ? `No collections recorded for ${week.start} to ${week.end}.`
+                : 'No collections recorded match your search.'}
+            </p>
+            {viewMode === 'week' && (
+              <button
+                type="button"
+                className="s"
+                onClick={() => setViewMode('all')}
+                style={{ marginTop: '8px', fontSize: '12px', padding: '4px 10px' }}
+              >
+                View All Collections History
+              </button>
+            )}
+          </div>
         )}
       </details>
 

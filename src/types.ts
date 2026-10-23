@@ -65,6 +65,10 @@ export interface CostItem {
   amt: number;
   shop?: string;
   created_by?: string;
+  driver_name?: string;
+  status?: 'paid' | 'unpaid';
+  paid_date?: string;
+  payment_method?: string;
 }
 
 export interface CustomerItem {

@@ -98,7 +98,9 @@ interface AppContextValue {
   addCustomer: (name: string, phone: string) => boolean;
   updateCustomer: (id: string, data: { name: string; phone: string }) => boolean;
   payDebt: (custId: string, amt: number) => void;
-  addCost: (date: string, descr: string, amt: number) => boolean;
+  addCost: (date: string, descr: string, amt: number, opts?: { driver_name?: string; status?: 'paid' | 'unpaid'; payment_method?: string; paid_date?: string }) => boolean;
+  markCostPaid: (costId: string, paymentMethod?: string, paidDate?: string) => void;
+  toggleCostPaid: (costId: string) => void;
   addPrice: (farm: string, item: string, buy: number, sell: number) => boolean;
   updatePrice: (id: string, field: 'buy' | 'sell', val: number) => void;
   delPrice: (id: string) => void;
@@ -357,7 +359,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [tab, setTab] = useState<TabKey>('home');
-  const [selDate, setSelDate] = useState<string>('');
+  const [selDate, setSelDate] = useState<string>(() => td());
   const [syncStatus, setSyncStatus] = useState<'synced' | 'saving' | 'offline'>('synced');
   const [syncText, setSyncText] = useState<string>('Synced');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -498,11 +500,33 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       // Step 5: Upsert costs
       if (newState.costs.length > 0) {
         const sanitizedCosts = newState.costs.map(c => ({
-          ...c,
-          created_by: cleanUUID(c.created_by)
+          id: c.id,
+          date: c.date,
+          descr: c.descr,
+          amt: Number(c.amt) || 0,
+          shop: c.shop || null,
+          created_by: cleanUUID(c.created_by),
+          driver_name: c.driver_name || null,
+          status: c.status || 'paid',
+          payment_method: c.payment_method || 'Cash',
+          paid_date: c.paid_date || null
         }));
         const { error } = await sbClient.from('costs').upsert(sanitizedCosts);
-        if (error) console.warn('Supabase costs upsert notice:', error.message);
+        if (error) {
+          if (error.message && (error.message.includes('column') || error.message.includes('schema'))) {
+            const basicCosts = sanitizedCosts.map(bc => ({
+              id: bc.id,
+              date: bc.date,
+              descr: bc.descr,
+              amt: bc.amt,
+              shop: bc.shop,
+              created_by: bc.created_by
+            }));
+            await sbClient.from('costs').upsert(basicCosts).then(undefined, console.warn);
+          } else {
+            console.warn('Supabase costs upsert notice:', error.message);
+          }
+        }
       }
 
       setSyncStatus('synced');
@@ -1117,12 +1141,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updateState(prev => {
       const costs = [...prev.costs];
       if (data.transport > 0) {
+        const transportCostId = uid();
+        addPendingCreation('costs', transportCostId);
         costs.push({
-          id: uid(),
+          id: transportCostId,
           date: dateVal,
           descr: `Transport: ${p.farm} (${data.qty} crates)`,
           amt: Number(data.transport),
-          created_by: me.id
+          shop: (data.shop || SHOPS[0]).trim(),
+          created_by: me.id,
+          driver_name: 'Delivery Driver',
+          status: 'unpaid'
         });
       }
       return {
@@ -1431,7 +1460,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     toast('Recorded payment');
   }, [can, updateState, toast]);
 
-  const addCost = useCallback((date: string, descr: string, amt: number) => {
+  const addCost = useCallback((
+    date: string,
+    descr: string,
+    amt: number,
+    opts?: { driver_name?: string; status?: 'paid' | 'unpaid'; payment_method?: string; paid_date?: string }
+  ) => {
     if (!can('cost')) {
       toast('You cannot record expenses');
       return false;
@@ -1459,12 +1493,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return prev;
       }
 
+      const isUnpaid = opts?.status === 'unpaid';
       const newCost: CostItem = {
         id: uid(),
         date: cleanDate,
         descr: cleanDescr,
         amt: numAmt,
-        created_by: me.id
+        created_by: me.id,
+        driver_name: opts?.driver_name ? sanitizeText(opts.driver_name, 80) : undefined,
+        status: opts?.status || (opts?.driver_name ? 'unpaid' : 'paid'),
+        payment_method: opts?.payment_method || 'Cash',
+        paid_date: isUnpaid ? undefined : (opts?.paid_date || cleanDate)
       };
       addPendingCreation('costs', newCost.id);
       return {
@@ -1478,9 +1517,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
-    toast('Saved expense');
+    toast(opts?.status === 'unpaid' ? 'Saved expense (Pending driver payment)' : 'Saved expense (Paid)');
     return true;
   }, [can, me.id, updateState, toast]);
+
+  const markCostPaid = useCallback((costId: string, paymentMethod = 'Cash', paidDate?: string) => {
+    updateState(prev => ({
+      ...prev,
+      costs: prev.costs.map(c => {
+        if (c.id === costId) {
+          return {
+            ...c,
+            status: 'paid' as const,
+            payment_method: paymentMethod,
+            paid_date: paidDate || td()
+          };
+        }
+        return c;
+      })
+    }));
+    toast('Driver expense marked as paid');
+  }, [updateState, toast]);
+
+  const toggleCostPaid = useCallback((costId: string) => {
+    let nextStatus = 'paid';
+    updateState(prev => ({
+      ...prev,
+      costs: prev.costs.map(c => {
+        if (c.id === costId) {
+          const isNowPaid = c.status !== 'paid';
+          nextStatus = isNowPaid ? 'paid' : 'unpaid';
+          return {
+            ...c,
+            status: isNowPaid ? ('paid' as const) : ('unpaid' as const),
+            paid_date: isNowPaid ? td() : undefined
+          };
+        }
+        return c;
+      })
+    }));
+    toast(nextStatus === 'paid' ? 'Marked as paid' : 'Marked as pending reimbursement');
+  }, [updateState, toast]);
 
   const addPrice = useCallback((farm: string, item: string, buy: number, sell: number) => {
     if (!can('prices')) {
@@ -1865,6 +1942,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updateCustomer,
     payDebt,
     addCost,
+    markCostPaid,
+    toggleCostPaid,
     addPrice,
     updatePrice,
     delPrice,
@@ -1922,6 +2001,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     updateCustomer,
     payDebt,
     addCost,
+    markCostPaid,
+    toggleCostPaid,
     addPrice,
     updatePrice,
     delPrice,

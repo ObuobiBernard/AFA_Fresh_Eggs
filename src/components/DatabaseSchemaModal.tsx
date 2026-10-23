@@ -47,6 +47,23 @@ BEGIN
     END IF;
 END $$;
 
+-- 4. Ensure costs has driver reimbursement tracking columns
+DO $$ 
+BEGIN 
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'costs' AND column_name = 'driver_name') THEN 
+        ALTER TABLE public.costs ADD COLUMN driver_name TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'costs' AND column_name = 'status') THEN 
+        ALTER TABLE public.costs ADD COLUMN status TEXT DEFAULT 'paid';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'costs' AND column_name = 'paid_date') THEN 
+        ALTER TABLE public.costs ADD COLUMN paid_date DATE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'costs' AND column_name = 'payment_method') THEN 
+        ALTER TABLE public.costs ADD COLUMN payment_method TEXT DEFAULT 'Cash';
+    END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_farmers_name ON public.farmers(name);`;
 
 export const DatabaseSchemaModal: React.FC<DatabaseSchemaModalProps> = ({ onClose }) => {
