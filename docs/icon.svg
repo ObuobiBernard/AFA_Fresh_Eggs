@@ -1,19 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#144027"/>
-      <stop offset="100%" stop-color="#1F5E3B"/>
-    </linearGradient>
-    <linearGradient id="egg" x1="20%" y1="10%" x2="80%" y2="90%">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="60%" stop-color="#FBF7EE"/>
-      <stop offset="100%" stop-color="#E9DFCA"/>
-    </linearGradient>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#05140B" flood-opacity="0.35"/>
     </filter>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
-  <ellipse cx="256" cy="276" rx="140" ry="176" fill="url(#egg)" filter="url(#shadow)"/>
+  <rect width="512" height="512" rx="112" fill="#1F5E3B"/>
+  <ellipse cx="256" cy="276" rx="140" ry="176" fill="#FDFBF7" filter="url(#shadow)"/>
   <ellipse cx="216" cy="210" rx="34" ry="50" fill="#FFFFFF" opacity="0.6" transform="rotate(-20 216 210)"/>
 </svg>

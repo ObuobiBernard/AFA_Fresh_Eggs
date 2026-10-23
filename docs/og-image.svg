@@ -1,26 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
   <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0E2B1B"/>
-      <stop offset="50%" stop-color="#1F5E3B"/>
-      <stop offset="100%" stop-color="#123B23"/>
-    </linearGradient>
-    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FCD34D"/>
-      <stop offset="100%" stop-color="#D97706"/>
-    </linearGradient>
-    <linearGradient id="eggGrad" x1="20%" y1="10%" x2="80%" y2="90%">
-      <stop offset="0%" stop-color="#FFFFFF"/>
-      <stop offset="60%" stop-color="#FAF5EB"/>
-      <stop offset="100%" stop-color="#E7D8BC"/>
-    </linearGradient>
     <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="130%">
       <feDropShadow dx="0" dy="24" stdDeviation="30" flood-color="#000000" flood-opacity="0.5"/>
     </filter>
   </defs>
 
   <!-- Background -->
-  <rect width="1200" height="630" fill="url(#bgGrad)"/>
+  <rect width="1200" height="630" fill="#1F5E3B"/>
 
   <!-- Decorative subtle grid circles -->
   <circle cx="1100" cy="100" r="280" fill="#2E7D4E" opacity="0.15"/>
@@ -30,14 +16,14 @@
   <g transform="translate(140, 165)">
     <!-- Egg Icon Badge -->
     <rect width="130" height="130" rx="36" fill="rgba(255, 255, 255, 0.12)" stroke="rgba(255, 255, 255, 0.25)" stroke-width="2"/>
-    <ellipse cx="65" cy="70" rx="36" ry="46" fill="url(#eggGrad)" filter="url(#cardShadow)"/>
+    <ellipse cx="65" cy="70" rx="36" ry="46" fill="#FAF5EB" filter="url(#cardShadow)"/>
     <ellipse cx="55" cy="55" rx="8" ry="14" fill="#FFFFFF" opacity="0.7" transform="rotate(-20 55 55)"/>
 
     <!-- Brand Typography -->
     <text x="160" y="60" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="52" font-weight="800" fill="#FFFFFF" letter-spacing="-1">
       AFA Fresh Eggs
     </text>
-    <text x="160" y="105" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="700" fill="url(#goldGrad)" letter-spacing="2">
+    <text x="160" y="105" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="22" font-weight="700" fill="#D97706" letter-spacing="2">
       ENTERPRISE · GHANA
     </text>
   </g>
